@@ -23,15 +23,15 @@
   <h1>RED SECTOR</h1>
   Something is loose in the facility. Find it before it finds you.<br><br>
   <b>VR:</b> press ENTER VR below.<br>
-  Left stick = move &middot; Trigger or pinch = fire AK-47 &middot; X/Y or grip = reload<br>
-  Right stick = turn &middot; Right trigger = flashlight on/off<br>Hand tracking: pinch to fire; pinch the button on your left palm to swap the gun hand.<br>
+  <b>Controllers:</b> left stick = move, right stick = turn, gun trigger = fire, A/B/X/Y or grip = reload, other trigger = flashlight.<br>
+  <b>Hand tracking:</b> pinch index = fire, pinch middle = reload. Flashlight hand: fist = walk, pinch = light on/off. Ring-finger pinch = snap turn (left hand turns left, right hand turns right).<br>
+  <b>Swap gun hand:</b> touch the glowing panel above your left wrist with your right finger (or press G).<br>
   The screen on the gun is a motion tracker. Listen: it is positional audio.<br><br>
-  <b>Desktop test:</b> click the screen. WASD, mouse, click to fire, R reload, F flashlight, Enter restart.
+  <b>Desktop test:</b> click the screen. WASD, mouse, click to fire, R reload, F flashlight, G swap hands, Enter restart.
 </div>
 <script type="module">
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
 /* ================= CONFIG (tweak freely) ================= */
 const TS = 2.4;              // tile size (meters) = corridor width
@@ -56,7 +56,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 document.body.appendChild(renderer.domElement);
-document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking', 'local-floor'] }));
+document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers'] }));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -381,126 +381,184 @@ flash.add(spot); spot.target.position.set(0, 0, -5); flash.add(spot.target);
 let flashOn = true;
 function toggleFlash() { flashOn = !flashOn; tone(A.master || A.ctx?.destination, { type: 'square', f: 1200, f2: 900, dur: 0.02, peak: 0.1 }); }
 
-/* ================= CONTROLLERS / HAND TRACKING / MOUNTING ================= */
-let leftC = null, rightC = null;
-let leftHand = null, rightHand = null;
-let leftHandInput = null, rightHandInput = null;
-let gunHand = 'left';
-let handButton = null, handButtonMat = null, handButtonLabel = null;
-let handButtonWasPinching = false, handFireWasPinching = false;
-const handFactory = new XRHandModelFactory();
+/* ================= INPUT SOURCES / HAND TRACKING / MOUNTING ================= */
+// Each side (left/right) is a controller, a tracked hand, or missing.
+const sides = {
+  left:  { src: null, ctrl: null, hand: null, holder: new THREE.Group(), g: {}, tracked: false, fistT: -9, prevRing: false },
+  right: { src: null, ctrl: null, hand: null, holder: new THREE.Group(), g: {}, tracked: false, fistT: -9, prevRing: false },
+};
+rig.add(sides.left.holder, sides.right.holder);
+let gunSide = 'left';
+const otherSide = s => (s === 'left' ? 'right' : 'left');
+const lightSide = () => otherSide(gunSide);
 
-function mountGunDesktop() {
-  camera.add(gun); gun.position.set(0.2, -0.22, -0.35); gun.rotation.set(0.15, 0, 0);
+function sideMode(side) {
+  if (!renderer.xr.isPresenting) return 'desk';
+  const s = sides[side];
+  if (!s.src) return 'none';
+  if (s.src.hand) return 'hand';
+  return s.ctrl ? 'ctrl' : 'none';
 }
-function mountFlashDesktop() {
-  camera.add(flash); flash.position.set(0.12, -0.1, -0.1); flash.rotation.set(0, 0, 0);
-}
-function mountGunVR(c) { c.add(gun); gun.position.set(0, -0.02, 0.04); gun.rotation.set(0, 0, 0); }
-function mountFlashVR(c) { c.add(flash); flash.position.set(0, 0, 0); flash.rotation.set(0, 0, 0); }
+function gpOf(side) { return sideMode(side) === 'ctrl' ? (sides[side].src.gamepad || null) : null; }
+const btn = (gp, i) => !!(gp && gp.buttons[i] && gp.buttons[i].pressed);
 
-function makeHandSwitchButton() {
-  const group = new THREE.Group();
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.027, 0.03, 0.012, 24),
-    new THREE.MeshBasicMaterial({ color: 0x351010 })
-  );
-  base.rotation.x = Math.PI / 2;
-  group.add(base);
-  const face = new THREE.Mesh(
-    new THREE.CircleGeometry(0.023, 24),
-    new THREE.MeshBasicMaterial({ color: 0xff3030, side: THREE.DoubleSide })
-  );
-  face.position.z = -0.007; group.add(face);
-  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 30px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('SWAP GUN', 128, 48); ctx.font = 'bold 25px sans-serif';
-  ctx.fillText('→ ' + gunHand.toUpperCase(), 128, 88);
-  const tex = new THREE.CanvasTexture(canvas);
-  const label = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.045),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthTest: false }));
-  label.position.set(0, 0, -0.009); group.add(label);
-  group.userData.canvas = canvas; group.userData.ctx = ctx; group.userData.texture = tex;
-  group.userData.label = label;
-  scene.add(group); group.visible = false; handButton = group; handButtonMat = face.material; handButtonLabel = label;
-}
-function updateHandButtonLabel() {
-  if (!handButton) return;
-  const c = handButton.userData.ctx, canvas = handButton.userData.canvas;
-  c.clearRect(0, 0, canvas.width, canvas.height);
-  c.fillStyle = '#fff'; c.font = 'bold 30px sans-serif'; c.textAlign = 'center';
-  c.fillText('SWAP GUN', 128, 48); c.font = 'bold 25px sans-serif';
-  c.fillText('GUN: ' + gunHand.toUpperCase(), 128, 88);
-  handButton.userData.texture.needsUpdate = true;
-}
-function getGunMount(handedness) {
-  // In hand-tracking mode the controller object may still exist, but its pose
-  // is not the tracked palm. Always prefer the actual tracked hand when available.
-  const hand = handedness === 'left' ? leftHand : rightHand;
-  const controller = handedness === 'left' ? leftC : rightC;
-  return hand || controller;
-}
-function swapGunHand() {
-  gunHand = gunHand === 'left' ? 'right' : 'left';
-  updateHandButtonLabel();
-  const target = getGunMount(gunHand);
-  if (target) mountGunVR(target);
-  else if (renderer.xr.isPresenting) camera.add(gun);
-}
-function getJoint(hand, name, out) {
-  const joint = hand && hand.joints && hand.joints[name];
-  if (!joint) return false;
-  joint.getWorldPosition(out);
-  return true;
-}
-function setupHand(hand, handedness) {
-  const model = handFactory.createHandModel(hand, 'mesh');
-  hand.add(model);
-  if (handedness === 'left') leftHand = hand; else rightHand = hand;
-  return hand;
-}
-makeHandSwitchButton();
 for (let i = 0; i < 2; i++) {
   const c = renderer.xr.getController(i); rig.add(c);
-  c.addEventListener('connected', e => {
-    c.userData.gamepad = e.data.gamepad; c.userData.hand = e.data.handedness;
-    if (e.data.handedness === 'left') { leftC = c; if (gunHand === 'left') mountGunVR(c); }
-    else if (e.data.handedness === 'right') { rightC = c; if (gunHand === 'right') mountGunVR(c); else mountFlashVR(c); }
-  });
-  c.addEventListener('disconnected', () => {
-    if (leftC === c) leftC = null;
-    if (rightC === c) rightC = null;
-  });
-
   const h = renderer.xr.getHand(i); rig.add(h);
-  h.addEventListener('connected', e => {
-    const handedness = e.data.handedness;
-    setupHand(h, handedness);
-    if (handedness === 'left') { leftHandInput = e.data; if (gunHand === 'left') mountGunVR(h); }
-    else if (handedness === 'right') { rightHandInput = e.data; if (gunHand === 'right') mountGunVR(h); else mountFlashVR(rightC || h); }
-  });
-  h.addEventListener('disconnected', () => {
-    if (leftHand === h) { leftHand = null; leftHandInput = null; }
-    if (rightHand === h) { rightHand = null; rightHandInput = null; }
-  });
+  const onConn = e => {
+    const src = e.data, side = src && src.handedness;
+    if (side !== 'left' && side !== 'right') return;
+    const s = sides[side]; s.src = src; s.ctrl = c; s.hand = h;
+  };
+  const onDisc = e => {
+    const src = e.data, side = src && src.handedness;
+    if ((side === 'left' || side === 'right') && sides[side].src === src) { sides[side].src = null; sides[side].tracked = false; }
+  };
+  for (const o of [c, h]) { o.addEventListener('connected', onConn); o.addEventListener('disconnected', onDisc); }
 }
+
+// pale, ghostly hands (drawn only while hand tracking is active)
+const handGeo = new THREE.SphereGeometry(1, 8, 6);
+const handMat = new THREE.MeshLambertMaterial({ color: 0xa89a90, emissive: 0x160606 });
+function decorateHand(h) {
+  if (!h || !h.joints) return;
+  for (const name in h.joints) {
+    const j = h.joints[name];
+    if (!j.userData.vis) { const m = new THREE.Mesh(handGeo, handMat); m.frustumCulled = false; j.add(m); j.userData.vis = m; }
+    j.userData.vis.scale.setScalar(Math.max(0.006, (j.jointRadius || 0.008) * 1.05));
+  }
+}
+
+// Build a holder frame from the hand joints. Holder -Z = direction the hand points (wrist -> knuckles),
+// holder +Y = thumb side. Gun barrel / flashlight beam follow -Z.
+const _f = new THREE.Vector3(), _a = new THREE.Vector3(), _u = new THREE.Vector3(), _hz = new THREE.Vector3(),
+      _hx = new THREE.Vector3(), _hy = new THREE.Vector3(), _hm = new THREE.Matrix4();
+function updateHolder(side) {
+  const s = sides[side], h = s.hand;
+  s.tracked = false;
+  if (!h || !h.joints) return;
+  const J = h.joints, W = J['wrist'], P = J['middle-finger-phalanx-proximal'], M = J['middle-finger-metacarpal'] || P,
+        I = J['index-finger-metacarpal'], K = J['pinky-finger-metacarpal'];
+  if (!W || !P || !I || !K || !W.visible || !P.visible || !I.visible || !K.visible) return;
+  _f.copy(P.position).sub(W.position).normalize();
+  _a.copy(I.position).sub(K.position);
+  _u.copy(_a).addScaledVector(_f, -_a.dot(_f)).normalize();
+  _hz.copy(_f).negate();
+  _hx.crossVectors(_u, _hz).normalize();
+  _hy.crossVectors(_hz, _hx);
+  _hm.makeBasis(_hx, _hy, _hz);
+  s.holder.quaternion.setFromRotationMatrix(_hm);
+  s.holder.position.copy(W.position).multiplyScalar(0.4).addScaledVector(M.position, 0.6);
+  s.tracked = true;
+}
+
+// Gestures (with hysteresis so they do not chatter)
+const hyst = (prev, d, on, off) => (prev ? d < off : d < on);
+function readGestures(side) {
+  const s = sides[side], g = s.g, h = s.hand;
+  g.valid = false;
+  const off = () => { g.pI = g.pM = g.pR = g.fist = false; };
+  if (sideMode(side) !== 'hand' || !h || !h.joints) { off(); return; }
+  const J = h.joints, T = J['thumb-tip'], IT = J['index-finger-tip'], MT = J['middle-finger-tip'],
+        RT = J['ring-finger-tip'], PT = J['pinky-finger-tip'], W = J['wrist'];
+  if (!(T && IT && MT && RT && PT && W) || !T.visible || !IT.visible || !MT.visible || !RT.visible || !PT.visible || !W.visible) { off(); return; }
+  g.valid = true;
+  g.pI = hyst(g.pI, T.position.distanceTo(IT.position), 0.022, 0.034);   // index pinch
+  g.pM = hyst(g.pM, T.position.distanceTo(MT.position), 0.022, 0.034);   // middle pinch
+  g.pR = hyst(g.pR, T.position.distanceTo(RT.position), 0.024, 0.036);   // ring pinch
+  const curl = (MT.position.distanceTo(W.position) + RT.position.distanceTo(W.position) + PT.position.distanceTo(W.position)) / 3;
+  g.fist = hyst(g.fist, curl, 0.11, 0.135);                                // fist (middle/ring/pinky curled)
+  if (g.fist) s.fistT = time;
+}
+
+// Where the gun and flashlight are attached right now
+const gunBase = new THREE.Vector3(), flashBase = new THREE.Vector3();
+function mountObj(obj, side, isGun) {
+  const m = sideMode(side), s = sides[side], base = isGun ? gunBase : flashBase;
+  let parent = null, rx = 0;
+  if (m === 'desk') {
+    parent = camera; const sx = side === 'left' ? -1 : 1;
+    if (isGun) { base.set(0.2 * sx, -0.22, -0.35); rx = 0.15; } else base.set(0.12 * sx, -0.1, -0.1);
+  } else if (m === 'ctrl') {
+    parent = s.ctrl; if (isGun) base.set(0, -0.02, 0.04); else base.set(0, 0, 0);
+  } else if (m === 'hand' && s.tracked) {
+    parent = s.holder; if (isGun) base.set(0, 0.05, -0.07); else base.set(0, 0, -0.08);
+  }
+  obj.visible = !!parent;
+  if (parent) { if (obj.parent !== parent) parent.add(obj); obj.rotation.set(rx, 0, 0); obj.position.copy(base); }
+}
+function syncMounts() { mountObj(gun, gunSide, true); mountObj(flash, lightSide(), false); }
+
+/* ---------- wrist button: switch gun hand ---------- */
+const swapCanvas = document.createElement('canvas'); swapCanvas.width = 512; swapCanvas.height = 256;
+const sg = swapCanvas.getContext('2d');
+const swapTex = new THREE.CanvasTexture(swapCanvas); swapTex.colorSpace = THREE.SRGBColorSpace;
+const swapPanel = new THREE.Mesh(new THREE.PlaneGeometry(0.11, 0.055),
+  new THREE.MeshBasicMaterial({ map: swapTex, transparent: true, side: THREE.DoubleSide }));
+swapPanel.visible = false;
+let swapDirty = true, swapHover = false, swapFlashT = 0, swapFlashOn = false, swapTouch = false, swapCD = 0;
+function drawSwap() {
+  const fl = swapFlashT > 0; swapFlashOn = fl;
+  const W = 512, H = 256;
+  sg.clearRect(0, 0, W, H);
+  sg.fillStyle = fl ? '#ff5a44' : swapHover ? '#5c1010' : '#220606';
+  sg.fillRect(0, 0, W, H);
+  sg.strokeStyle = fl ? '#ffffff' : '#ff2a1a'; sg.lineWidth = 10; sg.strokeRect(5, 5, W - 10, H - 10);
+  sg.textAlign = 'center';
+  sg.fillStyle = fl ? '#2a0000' : '#ff7a6a'; sg.font = 'bold 40px sans-serif'; sg.fillText('GUN HAND', W / 2, 62);
+  sg.fillStyle = '#ffffff'; sg.font = 'bold 104px sans-serif';
+  sg.fillText(gunSide === 'left' ? '< LEFT' : 'RIGHT >', W / 2, 168);
+  sg.fillStyle = fl ? '#2a0000' : '#c46a60'; sg.font = '32px sans-serif'; sg.fillText('TOUCH TO SWITCH', W / 2, 224);
+  swapTex.needsUpdate = true; swapDirty = false;
+}
+function swapGun() {
+  gunSide = otherSide(gunSide); swapFlashT = 0.3; swapDirty = true; lightGuard = time + 0.6;
+  tone(A.master, { type: 'square', f: 600, f2: 1000, dur: 0.06, peak: 0.18 });
+  haptic(0.5, 60, true);
+}
+// panel orientation for the back of the left hand: x = holder +Y, y = holder -Z (toward fingers), normal = holder -X
+const _pbq = new THREE.Quaternion().setFromRotationMatrix(
+  new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0)));
+const _pp = new THREE.Vector3(), _pq = new THREE.Quaternion(), _pl = new THREE.Vector3(), _pd = new THREE.Vector3();
+function pokerPos(out) {   // fingertip (hand) or controller tip of the RIGHT side
+  const m = sideMode('right');
+  if (m === 'hand') {
+    const t = sides.right.hand && sides.right.hand.joints && sides.right.hand.joints['index-finger-tip'];
+    if (t && t.visible) { t.getWorldPosition(out); return true; }
+  } else if (m === 'ctrl') {
+    const c = sides.right.ctrl; c.getWorldPosition(out); c.getWorldQuaternion(_pq);
+    out.add(_pd.set(0, 0, -0.06).applyQuaternion(_pq)); return true;
+  }
+  return false;
+}
+function updateSwapButton(dt) {
+  const xr = renderer.xr.isPresenting, m = sideMode('left');
+  let parent = null;
+  if (!xr) { parent = camera; swapPanel.position.set(-0.3, 0.2, -0.5); swapPanel.rotation.set(0, 0, 0); }
+  else if (m === 'hand' && sides.left.tracked) { parent = sides.left.holder; swapPanel.position.set(-0.075, 0, 0.07); swapPanel.quaternion.copy(_pbq); }
+  else if (m === 'ctrl') { parent = sides.left.ctrl; swapPanel.position.set(0, 0.085, 0.11); swapPanel.rotation.set(-1.0, 0, 0); }
+  swapPanel.visible = !!parent;
+  if (!parent) { swapTouch = false; return; }
+  if (swapPanel.parent !== parent) parent.add(swapPanel);
+  let touch = false, hover = false;
+  if (xr && pokerPos(_pp)) {
+    swapPanel.updateWorldMatrix(true, false);
+    swapPanel.worldToLocal(_pl.copy(_pp));
+    hover = Math.abs(_pl.x) < 0.07 && Math.abs(_pl.y) < 0.04 && Math.abs(_pl.z) < 0.09;
+    touch = Math.abs(_pl.x) < 0.055 && Math.abs(_pl.y) < 0.03 && Math.abs(_pl.z) < 0.03;
+  }
+  if (touch && !swapTouch && time > swapCD) { swapGun(); swapCD = time + 0.9; }
+  swapTouch = touch;
+  swapFlashT = Math.max(0, swapFlashT - dt);
+  if (hover !== swapHover || swapDirty || (swapFlashT > 0) !== swapFlashOn) { swapHover = hover; drawSwap(); }
+}
+
 renderer.xr.addEventListener('sessionstart', () => {
-  initAudio(); started = true; resetGame(); document.getElementById('info').style.display = 'none';
-  if (handButton) handButton.visible = true;
-  const gunMount = getGunMount(gunHand);
-  if (gunMount) mountGunVR(gunMount);
-  const oppositeController = gunHand === 'left' ? rightC : leftC;
-  const oppositeHand = gunHand === 'left' ? rightHand : leftHand;
-  if (oppositeHand) mountFlashVR(oppositeHand);
-  else if (oppositeController) mountFlashVR(oppositeController);
+  initAudio(); started = true; resetGame(); document.getElementById('info').style.display = 'none'; handHintShown = false;
 });
 renderer.xr.addEventListener('sessionend', () => {
   camera.position.set(0, 1.6, 0); camera.rotation.set(0, 0, 0);
-  mountGunDesktop(); mountFlashDesktop();
-  if (handButton) handButton.visible = false;
-  teleportDot.visible = false; teleportRing.visible = false;
-  teleportGestureWasActive = false; teleportTargetValid = false;
+  for (const s of [sides.left, sides.right]) { s.src = null; s.tracked = false; }
 });
 
 /* ================= HUD: message + vignette ================= */
@@ -570,9 +628,9 @@ let armL, armR, legL, legR, mEyes, mEyeLight;
   g.visible = false; scene.add(g);
 })();
 const HIT_SPHERES = [[2.0, 0.27, true], [1.55, 0.36, false], [1.05, 0.38, false], [0.5, 0.34, false]];
-function rayMonster(o, d) {
+function rayMonster(o, d, sc = 1) {
   let best = null; const m = monster.group.position;
-  for (const [y, r, head] of HIT_SPHERES) {
+  for (const [y, r0, head] of HIT_SPHERES) { const r = r0 * sc;
     tmp.set(m.x - o.x, y - o.y, m.z - o.z); const tca = tmp.dot(d); if (tca < 0) continue;
     const d2 = tmp.lengthSq() - tca * tca; if (d2 > r * r) continue;
     const t = tca - Math.sqrt(r * r - d2); if (!best || t < best.t) best = { t, head };
@@ -653,7 +711,7 @@ function setPos2() {
 
 /* ================= GAME STATE ================= */
 let started = false, state = 'menu', time = 0, ammo = AMMO_MAX, reloadT = 0, fireCD = 0, flashT = 0;
-let heartT = 0, beat = 0, hurt = 0, clangT = rand(8, 14), radarT = 0, lightT = 0, prevRT = false, snapReady = true;
+let heartT = 0, beat = 0, hurt = 0, clangT = rand(8, 14), radarT = 0, lightT = 0, prevRT = false, snapReady = true, prevLight = false, prevAny = false, lightGuard = 0, handHintShown = false, proxLast = 0;
 const keys = {}; let mouseDown = false;
 
 function resetGame() {
@@ -661,16 +719,18 @@ function resetGame() {
   rig.position.set(1.5 * TS, 0, 1.5 * TS); rig.rotation.y = 0;
   if (!renderer.xr.isPresenting) camera.rotation.set(0, 0, 0);
   spawnMonster();
-  showMsg(['RED SECTOR', 'Left stick move  |  Left trigger fire  |  X reload', 'Right stick turn  |  Right trigger flashlight'], 8);
+  showMsg(['RED SECTOR', 'Left stick move | Gun trigger fire | A/B reload', 'Right stick turn | Other trigger flashlight', 'Touch the wrist panel to swap gun hand'], 8);
 }
 function killPlayer() {
   state = 'dead'; hurt = 1; sfx.roar();
-  showMsg(['YOU DIED', 'Kills: ' + kills, 'Right trigger / Enter to restart'], Infinity);
+  showMsg(['YOU DIED', 'Kills: ' + kills, 'Any trigger or pinch / Enter to restart'], Infinity);
 }
 function startReload() { if (reloadT > 0) return; reloadT = RELOAD_TIME; sfx.reload(); }
-function haptic(strength, ms) {
-  const gp = leftC && leftC.userData.gamepad;
-  try { const h = gp && gp.hapticActuators && gp.hapticActuators[0]; if (h && h.pulse) h.pulse(strength, ms); } catch (e) {}
+function haptic(strength, ms, both) {
+  for (const side of both ? ['left', 'right'] : [gunSide]) {
+    const gp = gpOf(side);
+    try { const h = gp && gp.hapticActuators && gp.hapticActuators[0]; if (h && h.pulse) h.pulse(strength, ms); } catch (e) {}
+  }
 }
 function rayWall(o, d, max) {
   for (let t = 0.1; t < max; t += 0.1) {
@@ -684,7 +744,7 @@ function shoot() {
   muzzle.getWorldPosition(P1); muzzle.getWorldQuaternion(Q1);
   D1.set((Math.random() - 0.5) * 0.015, (Math.random() - 0.5) * 0.015, -1).applyQuaternion(Q1).normalize();
   let best = rayWall(P1, D1, 40), hitM = false, head = false;
-  if (monster.alive) { const h = rayMonster(P1, D1); if (h && h.t < best) { best = h.t; hitM = true; head = h.head; } }
+  if (monster.alive) { const h = rayMonster(P1, D1, sideMode(gunSide) === 'hand' ? 1.4 : 1); if (h && h.t < best) { best = h.t; hitM = true; head = h.head; } }
   E1.copy(P1).addScaledVector(D1, best);
   spawnTracer(P1, E1);
   if (hitM) { spawnImpact(E1, 0x8a0000); damageMonster(head ? 22 : 9); } else if (best < 40) spawnImpact(E1, 0xffb050);
@@ -696,6 +756,7 @@ function shoot() {
 window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'KeyF' && started && state === 'play') toggleFlash();
+  if (e.code === 'KeyG' && started) swapGun();
   if (e.code === 'Enter' && state === 'dead') resetGame();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -752,144 +813,73 @@ function movePlayer(ax, ay, dt) {
   if (!blocked(hx + mx, hz)) { rig.position.x += mx; hx += mx; }
   if (!blocked(hx, hz + mz)) rig.position.z += mz;
 }
-const jointA = new THREE.Vector3(), jointB = new THREE.Vector3(), jointC = new THREE.Vector3();
-const teleportDot = new THREE.Mesh(
-  new THREE.SphereGeometry(0.095, 20, 14),
-  new THREE.MeshBasicMaterial({ color: 0x55ff99, transparent: true, opacity: 0.95, depthTest: false })
-);
-teleportDot.renderOrder = 1000;
-teleportDot.visible = false;
-scene.add(teleportDot);
-const teleportRing = new THREE.Mesh(
-  new THREE.RingGeometry(0.12, 0.17, 28),
-  new THREE.MeshBasicMaterial({ color: 0x55ff99, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthTest: false })
-);
-teleportRing.rotation.x = -Math.PI / 2;
-teleportRing.renderOrder = 999;
-teleportRing.visible = false;
-scene.add(teleportRing);
-let teleportGestureWasActive = false;
-let teleportTargetValid = false;
-const teleportTarget = new THREE.Vector3();
-const teleportForward = new THREE.Vector3();
-function getTeleportTarget(out) {
-  headPos(vH); headFwd();
-  // Keep the landing point on the floor, and pull it back if a wall blocks it.
-  for (let d = 5.5; d >= 1.25; d -= 0.25) {
-    const x = vH.x + vF.x * d, z = vH.z + vF.z * d;
-    if (!blocked(x, z, PLAYER_R + 0.03)) {
-      out.set(x, rig.position.y + 0.04, z);
-      return true;
-    }
-  }
-  return false;
-}
-function teleportToTarget() {
-  if (!teleportTargetValid) return;
-  headPos(vH);
-  const dx = teleportTarget.x - vH.x;
-  const dz = teleportTarget.z - vH.z;
-  const x = rig.position.x + dx, z = rig.position.z + dz;
-  if (!blocked(x, z, PLAYER_R + 0.03)) {
-    rig.position.x = x;
-    rig.position.z = z;
-    sfx.click();
-  }
-}
-function updateTrackedHands() {
-  if (!renderer.xr.isPresenting) return false;
-  let handFire = false;
-  let teleportGesture = false;
-  const gestureHand = gunHand === 'left' ? leftHand : rightHand;
-  if (gestureHand) {
-    const wrist = new THREE.Vector3();
-    const midTip = new THREE.Vector3(), ringTip = new THREE.Vector3(), pinkyTip = new THREE.Vector3(), indexTip = new THREE.Vector3();
-    const hasWrist = getJoint(gestureHand, 'wrist', wrist);
-    const hasMid = getJoint(gestureHand, 'middle-finger-tip', midTip);
-    const hasRing = getJoint(gestureHand, 'ring-finger-tip', ringTip);
-    const hasPinky = getJoint(gestureHand, 'pinky-finger-tip', pinkyTip);
-    const hasIndex = getJoint(gestureHand, 'index-finger-tip', indexTip);
-    // Curl middle, ring and pinky toward the palm while keeping the index finger extended.
-    teleportGesture = hasWrist && hasMid && hasRing && hasPinky && hasIndex &&
-      midTip.distanceTo(wrist) < 0.135 &&
-      ringTip.distanceTo(wrist) < 0.125 &&
-      pinkyTip.distanceTo(wrist) < 0.115 &&
-      indexTip.distanceTo(wrist) > 0.145;
-  }
-  if (teleportGesture) {
-    teleportTargetValid = getTeleportTarget(teleportTarget);
-    teleportDot.visible = teleportTargetValid;
-    teleportRing.visible = teleportTargetValid;
-    if (teleportTargetValid) {
-      teleportDot.position.copy(teleportTarget);
-      teleportRing.position.copy(teleportTarget);
-    }
-  } else {
-    teleportDot.visible = false;
-    teleportRing.visible = false;
-    if (teleportGestureWasActive) teleportToTarget();
-  }
-  teleportGestureWasActive = teleportGesture;
-  // Place the switch on the left palm, between the thumb and index knuckles.
-  if (leftHand && handButton) {
-    const hasIndex = getJoint(leftHand, 'index-finger-metacarpal', jointA);
-    const hasThumb = getJoint(leftHand, 'thumb-metacarpal', jointB);
-    const hasWrist = getJoint(leftHand, 'wrist', jointC);
-    if (hasIndex && hasThumb) {
-      handButton.position.copy(jointA).lerp(jointB, 0.55);
-      if (hasWrist) handButton.position.lerp(jointC, 0.15);
-      camera.getWorldQuaternion(Q1); handButton.quaternion.copy(Q1);
-      handButton.visible = true;
-      const indexTip = new THREE.Vector3(), thumbTip = new THREE.Vector3();
-      const gotIndexTip = getJoint(leftHand, 'index-finger-tip', indexTip);
-      const gotThumbTip = getJoint(leftHand, 'thumb-tip', thumbTip);
-      const pinch = gotIndexTip && gotThumbTip && indexTip.distanceTo(thumbTip) < 0.027;
-      const nearButton = gotIndexTip && indexTip.distanceTo(handButton.position) < 0.065;
-      if (pinch && nearButton && !handButtonWasPinching) {
-        swapGunHand(); handButtonMat.color.setHex(0x50ff80);
-      } else if (!pinch || !nearButton) handButtonMat.color.setHex(0xff3030);
-      handButtonWasPinching = !!(pinch && nearButton);
-    }
-  }
-  // Pinching with the currently selected gun hand fires; the left-hand switch pinch takes priority.
-  const activeHand = gunHand === 'left' ? leftHand : rightHand;
-  if (activeHand && !teleportGesture) {
-    const it = new THREE.Vector3(), tt = new THREE.Vector3();
-    const a = getJoint(activeHand, 'index-finger-tip', it);
-    const b = getJoint(activeHand, 'thumb-tip', tt);
-    const pinch = a && b && it.distanceTo(tt) < 0.027;
-    if (pinch && !(gunHand === 'left' && handButtonWasPinching)) handFire = true;
-    handFireWasPinching = pinch;
-  }
-  return handFire;
-}
-
 function update(dt) {
   time += dt;
   const xr = renderer.xr.isPresenting;
   let ax = 0, ay = 0, fire = false, reloadBtn = false;
-  const trackedHandFire = updateTrackedHands();
   if (xr) {
-    const gl = leftC && leftC.userData.gamepad, gr = rightC && rightC.userData.gamepad;
-    if (gl) {
-      const a = gl.axes; ax = dz(a.length >= 4 ? a[2] : a[0]); ay = -dz(a.length >= 4 ? a[3] : a[1]);
-      fire = !!(gl.buttons[0] && gl.buttons[0].pressed);
-      reloadBtn = !!((gl.buttons[4] && gl.buttons[4].pressed) || (gl.buttons[5] && gl.buttons[5].pressed) || (gl.buttons[1] && gl.buttons[1].pressed));
+    for (const side of ['left', 'right']) {
+      const s = sides[side];
+      if (sideMode(side) === 'hand') { updateHolder(side); decorateHand(s.hand); } else s.tracked = false;
+      readGestures(side);
     }
-    if (gr) {
-      const a = gr.axes, sx = a.length >= 4 ? a[2] : a[0];
-      if (Math.abs(sx) > 0.7 && snapReady && state === 'play') { snapTurn(sx > 0 ? 1 : -1); snapReady = false; }
+    const gS = gunSide, lS = lightSide(), gm = sideMode(gS), lm = sideMode(lS);
+
+    // locomotion: left stick, or a fist on the flashlight hand when hand tracking
+    const gpL = gpOf('left');
+    if (gpL) { const a = gpL.axes; ax = dz(a.length >= 4 ? a[2] : a[0]); ay = -dz(a.length >= 4 ? a[3] : a[1]); }
+    else if (lm === 'hand' && sides[lS].g.fist) ay = 1;
+
+    // gun hand: trigger / index pinch = fire, face buttons / middle pinch = reload
+    if (gm === 'ctrl') { const gp = gpOf(gS); fire = btn(gp, 0); reloadBtn = btn(gp, 4) || btn(gp, 5) || btn(gp, 1); }
+    else if (gm === 'hand' && sides[gS].tracked) { fire = !!sides[gS].g.pI; reloadBtn = !!sides[gS].g.pM; }
+
+    // flashlight hand: trigger / index pinch toggles the light
+    let lt = false;
+    if (lm === 'ctrl') lt = btn(gpOf(lS), 0);
+    else if (lm === 'hand') { const g = sides[lS].g; lt = !!g.pI && !g.fist && (time - sides[lS].fistT) > 0.3; }
+    if (lt && !prevLight && time > lightGuard && state === 'play') toggleFlash();
+    prevLight = lt;
+
+    // any trigger / pinch restarts after dying
+    let at = false;
+    for (const side of ['left', 'right']) {
+      const m = sideMode(side);
+      if (m === 'ctrl') at = at || btn(gpOf(side), 0); else if (m === 'hand') at = at || !!sides[side].g.pI;
+    }
+    if (at && !prevAny && state === 'dead') resetGame();
+    prevAny = at;
+
+    // snap turn: right stick, or ring-finger pinch (left hand = turn left, right hand = turn right)
+    let turnDir = 0;
+    if (sideMode('right') === 'ctrl') {
+      const gp = gpOf('right'), a = gp ? gp.axes : [0, 0, 0, 0], sx = a.length >= 4 ? a[2] : a[0];
+      if (Math.abs(sx) > 0.7 && snapReady) { turnDir = sx > 0 ? 1 : -1; snapReady = false; }
       if (Math.abs(sx) < 0.3) snapReady = true;
-      const rt = !!(gr.buttons[0] && gr.buttons[0].pressed);
-      if (rt && !prevRT) { if (state === 'dead') resetGame(); else if (state === 'play') toggleFlash(); }
-      prevRT = rt;
+    }
+    for (const side of ['left', 'right']) {
+      const s = sides[side], g = s.g;
+      const ring = sideMode(side) === 'hand' && !!g.pR && !g.pI && !g.pM;
+      if (ring && !s.prevRing) turnDir = side === 'right' ? 1 : -1;
+      s.prevRing = ring;
+    }
+    if (turnDir && state === 'play') snapTurn(turnDir);
+
+    if ((sideMode('left') === 'hand' || sideMode('right') === 'hand') && !handHintShown && state === 'play') {
+      handHintShown = true;
+      showMsg(['HAND TRACKING', 'Pinch index: fire  |  Pinch middle: reload', 'Flashlight hand: fist = walk, pinch = light', 'Ring pinch: turn  |  Wrist panel: swap gun'], 10, '#ff6040');
     }
   } else {
     ax = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0); ay = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
     fire = mouseDown; reloadBtn = !!keys.KeyR;
   }
-  if (trackedHandFire) fire = true;
   headFwd();
+
+  // attach gun / flashlight / wrist button to whatever is holding them, with a fear tremble
+  syncMounts();
+  const tr = proxLast * 0.007;
+  if (tr > 0.0003) for (const o of [gun, flash]) if (o.visible) { o.position.x += (Math.random() - 0.5) * tr; o.position.y += (Math.random() - 0.5) * tr; }
+  updateSwapButton(dt);
 
   if (started && state === 'play') {
     if (ax || ay) movePlayer(ax, ay, dt);
@@ -941,8 +931,9 @@ function update(dt) {
 
   // heartbeat + vignette
   const prox = (monster.alive && state === 'play') ? clamp(1 - monster.dist / 10, 0, 1) : 0;
+  proxLast = prox;
   if (state === 'play' && prox > 0.05) {
-    heartT -= dt; if (heartT <= 0) { sfx.heart(); heartT = 1.1 - 0.75 * prox; beat = 1; haptic(0.15 + prox * 0.3, 60); }
+    heartT -= dt; if (heartT <= 0) { sfx.heart(); heartT = 1.1 - 0.75 * prox; beat = 1; haptic(0.15 + prox * 0.3, 60, true); }
   }
   beat = Math.max(0, beat - dt * 3);
   vignette.material.uniforms.uI.value = state === 'dead' ? 1 : clamp(prox * 0.7 + beat * 0.25 * prox, 0, 0.95);
