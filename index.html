@@ -434,10 +434,17 @@ function updateHandButtonLabel() {
   c.fillText('GUN: ' + gunHand.toUpperCase(), 128, 88);
   handButton.userData.texture.needsUpdate = true;
 }
+function getGunMount(handedness) {
+  // In hand-tracking mode the controller object may still exist, but its pose
+  // is not the tracked palm. Always prefer the actual tracked hand when available.
+  const hand = handedness === 'left' ? leftHand : rightHand;
+  const controller = handedness === 'left' ? leftC : rightC;
+  return hand || controller;
+}
 function swapGunHand() {
   gunHand = gunHand === 'left' ? 'right' : 'left';
   updateHandButtonLabel();
-  const target = gunHand === 'left' ? (leftC || leftHand) : (rightC || rightHand);
+  const target = getGunMount(gunHand);
   if (target) mountGunVR(target);
   else if (renderer.xr.isPresenting) camera.add(gun);
 }
@@ -481,15 +488,19 @@ for (let i = 0; i < 2; i++) {
 renderer.xr.addEventListener('sessionstart', () => {
   initAudio(); started = true; resetGame(); document.getElementById('info').style.display = 'none';
   if (handButton) handButton.visible = true;
-  if (gunHand === 'left' && (leftC || leftHand)) mountGunVR(leftC || leftHand);
-  if (gunHand === 'right' && (rightC || rightHand)) mountGunVR(rightC || rightHand);
-  if (gunHand === 'left' && rightC) mountFlashVR(rightC);
-  if (gunHand === 'right' && leftC) mountFlashVR(leftC);
+  const gunMount = getGunMount(gunHand);
+  if (gunMount) mountGunVR(gunMount);
+  const oppositeController = gunHand === 'left' ? rightC : leftC;
+  const oppositeHand = gunHand === 'left' ? rightHand : leftHand;
+  if (oppositeHand) mountFlashVR(oppositeHand);
+  else if (oppositeController) mountFlashVR(oppositeController);
 });
 renderer.xr.addEventListener('sessionend', () => {
   camera.position.set(0, 1.6, 0); camera.rotation.set(0, 0, 0);
   mountGunDesktop(); mountFlashDesktop();
   if (handButton) handButton.visible = false;
+  teleportDot.visible = false; teleportRing.visible = false;
+  teleportGestureWasActive = false; teleportTargetValid = false;
 });
 
 /* ================= HUD: message + vignette ================= */
@@ -742,9 +753,83 @@ function movePlayer(ax, ay, dt) {
   if (!blocked(hx, hz + mz)) rig.position.z += mz;
 }
 const jointA = new THREE.Vector3(), jointB = new THREE.Vector3(), jointC = new THREE.Vector3();
+const teleportDot = new THREE.Mesh(
+  new THREE.SphereGeometry(0.095, 20, 14),
+  new THREE.MeshBasicMaterial({ color: 0x55ff99, transparent: true, opacity: 0.95, depthTest: false })
+);
+teleportDot.renderOrder = 1000;
+teleportDot.visible = false;
+scene.add(teleportDot);
+const teleportRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.12, 0.17, 28),
+  new THREE.MeshBasicMaterial({ color: 0x55ff99, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthTest: false })
+);
+teleportRing.rotation.x = -Math.PI / 2;
+teleportRing.renderOrder = 999;
+teleportRing.visible = false;
+scene.add(teleportRing);
+let teleportGestureWasActive = false;
+let teleportTargetValid = false;
+const teleportTarget = new THREE.Vector3();
+const teleportForward = new THREE.Vector3();
+function getTeleportTarget(out) {
+  headPos(vH); headFwd();
+  // Keep the landing point on the floor, and pull it back if a wall blocks it.
+  for (let d = 5.5; d >= 1.25; d -= 0.25) {
+    const x = vH.x + vF.x * d, z = vH.z + vF.z * d;
+    if (!blocked(x, z, PLAYER_R + 0.03)) {
+      out.set(x, rig.position.y + 0.04, z);
+      return true;
+    }
+  }
+  return false;
+}
+function teleportToTarget() {
+  if (!teleportTargetValid) return;
+  headPos(vH);
+  const dx = teleportTarget.x - vH.x;
+  const dz = teleportTarget.z - vH.z;
+  const x = rig.position.x + dx, z = rig.position.z + dz;
+  if (!blocked(x, z, PLAYER_R + 0.03)) {
+    rig.position.x = x;
+    rig.position.z = z;
+    sfx.click();
+  }
+}
 function updateTrackedHands() {
   if (!renderer.xr.isPresenting) return false;
   let handFire = false;
+  let teleportGesture = false;
+  const gestureHand = gunHand === 'left' ? leftHand : rightHand;
+  if (gestureHand) {
+    const wrist = new THREE.Vector3();
+    const midTip = new THREE.Vector3(), ringTip = new THREE.Vector3(), pinkyTip = new THREE.Vector3(), indexTip = new THREE.Vector3();
+    const hasWrist = getJoint(gestureHand, 'wrist', wrist);
+    const hasMid = getJoint(gestureHand, 'middle-finger-tip', midTip);
+    const hasRing = getJoint(gestureHand, 'ring-finger-tip', ringTip);
+    const hasPinky = getJoint(gestureHand, 'pinky-finger-tip', pinkyTip);
+    const hasIndex = getJoint(gestureHand, 'index-finger-tip', indexTip);
+    // Curl middle, ring and pinky toward the palm while keeping the index finger extended.
+    teleportGesture = hasWrist && hasMid && hasRing && hasPinky && hasIndex &&
+      midTip.distanceTo(wrist) < 0.135 &&
+      ringTip.distanceTo(wrist) < 0.125 &&
+      pinkyTip.distanceTo(wrist) < 0.115 &&
+      indexTip.distanceTo(wrist) > 0.145;
+  }
+  if (teleportGesture) {
+    teleportTargetValid = getTeleportTarget(teleportTarget);
+    teleportDot.visible = teleportTargetValid;
+    teleportRing.visible = teleportTargetValid;
+    if (teleportTargetValid) {
+      teleportDot.position.copy(teleportTarget);
+      teleportRing.position.copy(teleportTarget);
+    }
+  } else {
+    teleportDot.visible = false;
+    teleportRing.visible = false;
+    if (teleportGestureWasActive) teleportToTarget();
+  }
+  teleportGestureWasActive = teleportGesture;
   // Place the switch on the left palm, between the thumb and index knuckles.
   if (leftHand && handButton) {
     const hasIndex = getJoint(leftHand, 'index-finger-metacarpal', jointA);
@@ -768,7 +853,7 @@ function updateTrackedHands() {
   }
   // Pinching with the currently selected gun hand fires; the left-hand switch pinch takes priority.
   const activeHand = gunHand === 'left' ? leftHand : rightHand;
-  if (activeHand) {
+  if (activeHand && !teleportGesture) {
     const it = new THREE.Vector3(), tt = new THREE.Vector3();
     const a = getJoint(activeHand, 'index-finger-tip', it);
     const b = getJoint(activeHand, 'thumb-tip', tt);
