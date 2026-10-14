@@ -10,16 +10,6 @@
   #info{position:fixed;left:16px;top:16px;max-width:420px;background:rgba(0,0,0,.65);border:1px solid #600;padding:14px 18px;border-radius:8px;font-size:14px;line-height:1.5;z-index:5}
   #info h1{margin:0 0 6px;font-size:20px;color:#f33;letter-spacing:3px}
   #info b{color:#fff}
-  #game-hud{display:none;position:fixed;right:14px;bottom:14px;z-index:10;width:158px;padding:10px;background:rgba(0,8,7,.88);border:1px solid #8b2219;border-radius:8px;box-shadow:0 0 18px #7d120c66;color:#e7f4ea;font:11px/1.4 ui-monospace,monospace;touch-action:manipulation}
-  #game-hud .hud-title{display:flex;justify-content:space-between;align-items:center;color:#ff675b;font-weight:900;letter-spacing:1px;margin-bottom:5px}
-  #battery-track{height:7px;background:#252b29;border:1px solid #3d4b43;border-radius:3px;overflow:hidden;margin:4px 0 5px}
-  #battery-bar{height:100%;width:100%;background:#5dff92;box-shadow:0 0 8px #37ff8b;transition:width .15s linear,background .15s}
-  #radar-toggle{width:100%;margin:5px 0 7px;padding:7px;border:1px solid #28794b;border-radius:4px;background:#071e12;color:#8dffb5;font:bold 11px ui-monospace,monospace}
-  #radar-toggle:active{background:#174b2a}
-  #radar-view{display:block;text-align:center}
-  #radar-view canvas{display:block;width:128px;height:128px;max-width:100%;margin:auto;border:1px solid #1d6b3b;image-rendering:pixelated}
-  #radar-caption{color:#5dff92;text-align:center;font-size:10px;margin-top:2px}
-  @media(max-width:600px){#info{left:8px;top:8px;right:8px;max-width:none;font-size:12px;padding:10px}#game-hud{right:8px;bottom:8px;width:126px;padding:7px}#radar-view canvas{width:108px;height:108px}}
 </style>
 <script type="importmap">
 {"imports":{
@@ -31,20 +21,13 @@
 <body>
 <div id="info">
   <h1>RED SECTOR</h1>
-  Something is loose in a sprawling facility. Find supplies, watch your battery, and survive the hunt.<br><br>
+  Something is loose in the facility. Find it before it finds you.<br><br>
   <b>VR:</b> press ENTER VR below.<br>
-  <b>Controllers:</b> left stick = move, right stick = turn, gun trigger = fire, A/B or grip = reload, other trigger = flashlight, thumbstick click = radar toggle.<br>
-  <b>Hand tracking:</b> pinch index = fire, pinch middle = reload. Flashlight hand: fist = walk (tilt to strafe), middle pinch = back up, index pinch = light on/off. Ring-finger pinch = snap turn; pinky pinch toggles radar.<br>
+  <b>Controllers:</b> left stick = move, right stick = turn, gun trigger = fire, A/B/X/Y or grip = reload, other trigger = flashlight.<br>
+  <b>Hand tracking:</b> pinch index = fire, pinch middle = reload. Flashlight hand: fist = walk, pinch = light on/off. Ring-finger pinch = snap turn (left hand turns left, right hand turns right).<br>
   <b>Swap gun hand:</b> touch the glowing panel above your left wrist with your right finger (or press G).<br>
-  The radar can be toggled with T, the HUD button, controller menu/thumbstick button, or a thumb-to-pinky pinch in VR. Flashlight battery drains while lit; grab glowing green power cells in facility rooms. The screen on the gun is a motion tracker. Listen: it is positional audio.<br><br>
-  <b>Desktop test:</b> click the screen. WASD, mouse, click to fire, R reload, F flashlight, T radar, G swap hands, Enter restart.
-</div>
-<div id="game-hud" aria-label="Game status">
-  <div class="hud-title"><span>FIELD EQUIPMENT</span><span>R-09</span></div>
-  <div><span>FLASHLIGHT BATTERY</span><span id="battery-text" style="float:right">100%</span></div>
-  <div id="battery-track"><div id="battery-bar"></div></div>
-  <button id="radar-toggle" type="button">RADAR: ON [T]</button>
-  <div id="radar-view"></div><div id="radar-caption">MOTION TRACKER</div>
+  The screen on the gun is a motion tracker. Listen: it is positional audio.<br><br>
+  <b>Desktop test:</b> click the screen. WASD, mouse, click to fire, R reload, F flashlight, G swap hands, Enter restart.
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -52,7 +35,7 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 
 /* ================= CONFIG (tweak freely) ================= */
 const TS = 2.4;              // tile size (meters) = corridor width
-const CELLS = 15;            // larger facility: 15 x 15 rooms with longer routes
+const CELLS = 9;             // maze is CELLS x CELLS rooms
 const W = CELLS * 2 + 1;     // grid tiles per side
 const WALL_H = 3.2;
 const PLAYER_SPEED = 3.4;
@@ -61,9 +44,9 @@ const AMMO_MAX = 30;
 const FIRE_DELAY = 0.1;      // 600 rpm
 const RELOAD_TIME = 1.8;
 const MONSTER_HP = 100;
-const MONSTER_BASE_SPEED = 2.4; // gives players time to explore and react
-const MONSTER_MAX_SPEED = 3.8; // still dangerous, but not instantly overwhelming
-const AMBIENT_LIGHT = 0.3;   // very dark ambient lighting; flashlight becomes essential
+const MONSTER_BASE_SPEED = 2.8;
+const MONSTER_MAX_SPEED = 4.4;
+const AMBIENT_LIGHT = 0.32;   // keep the facility frighteningly dark
 const FLASH_INTENSITY = 45;
 
 /* ================= RENDERER / SCENE ================= */
@@ -77,7 +60,7 @@ document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
-scene.fog = new THREE.Fog(0x080000, 3, 26);
+scene.fog = new THREE.FogExp2(0x030000, 0.055);
 
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 80);
 const rig = new THREE.Group();
@@ -85,7 +68,7 @@ scene.add(rig);
 rig.add(camera);
 camera.position.set(0, 1.6, 0);
 
-scene.add(new THREE.AmbientLight(0x552222, AMBIENT_LIGHT));
+scene.add(new THREE.AmbientLight(0x170606, AMBIENT_LIGHT));
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -173,15 +156,6 @@ const grid = Array.from({ length: W }, () => new Uint8Array(W).fill(1)); // 1 = 
   }
 })();
 
-// Selected maze cells are widened into connected 3x3 facility chambers before geometry/pathfinding is built.
-const FACILITY_ROOMS = [[5,5], [13,3], [9,13], [15,15], [3,15], [21,5], [23,17], [7,23], [19,23]];
-for (const [rx, rz] of FACILITY_ROOMS) {
-  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-    const x = rx + dx, z = rz + dz;
-    if (x > 0 && z > 0 && x < W - 1 && z < W - 1) grid[z][x] = 0;
-  }
-}
-
 function isWall(wx, wz) {
   const tx = Math.floor(wx / TS), tz = Math.floor(wz / TS);
   if (tx < 0 || tz < 0 || tx >= W || tz >= W) return true;
@@ -212,58 +186,6 @@ floor.rotation.x = -Math.PI / 2; floor.position.set(W * TS / 2, 0, W * TS / 2); 
 const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W * TS, W * TS), new THREE.MeshLambertMaterial({ color: 0x1c1c1e }));
 ceil.rotation.x = Math.PI / 2; ceil.position.set(W * TS / 2, WALL_H, W * TS / 2); scene.add(ceil);
 
-/* ================= FACILITY ROOMS / BATTERY CELLS ================= */
-const batteryPickups = [], facilityFlickerLights = [];
-const steelMat = new THREE.MeshLambertMaterial({ color: 0x343b3f });
-const steelEdgeMat = new THREE.MeshLambertMaterial({ color: 0x596267 });
-const screenMat = new THREE.MeshBasicMaterial({ color: 0x19b878 });
-const hazardMat = new THREE.MeshBasicMaterial({ color: 0x9b6a1b });
-const roomOverlayMat = new THREE.MeshBasicMaterial({ color: 0x121a1a, transparent: true, opacity: 0.65, depthWrite: false });
-for (let ri = 0; ri < FACILITY_ROOMS.length; ri++) {
-  const [cx, cz] = FACILITY_ROOMS[ri];
-  const x = (cx + 0.5) * TS, z = (cz + 0.5) * TS;
-  // Industrial floor inset and yellow-black warning strips make the open chamber read as a room.
-  const inset = new THREE.Mesh(new THREE.PlaneGeometry(TS * 2.82, TS * 2.82), roomOverlayMat);
-  inset.rotation.x = -Math.PI / 2; inset.position.set(x, 0.012, z); scene.add(inset);
-  for (const side of [-1, 1]) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(TS * 2.65, 0.018, 0.075), hazardMat);
-    stripe.position.set(x, 0.025, z + side * TS * 1.34); scene.add(stripe);
-  }
-  // Wall consoles / server cabinets. They are decorative; the maze wall grid remains the movement authority.
-  const consoleX = x + (ri % 2 ? -2.55 : 2.55);
-  const consoleZ = z - 1.8;
-  const cabinet = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.25, 0.52), steelMat);
-  cabinet.position.set(consoleX, 0.63, consoleZ); scene.add(cabinet);
-  const cabinetFace = new THREE.Mesh(new THREE.BoxGeometry(0.43, 0.48, 0.025), steelEdgeMat);
-  cabinetFace.position.set(consoleX, 0.84, consoleZ - 0.275); scene.add(cabinetFace);
-  const console = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.82, 0.43), steelMat);
-  console.position.set(x - 1.85, 0.42, z + 2.48); scene.add(console);
-  const monitor = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.36, 0.045), steelEdgeMat);
-  monitor.position.set(x - 1.85, 0.96, z + 2.48); scene.add(monitor);
-  const monitorGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.27), screenMat);
-  monitorGlow.position.set(x - 1.85, 0.96, z + 2.45); scene.add(monitorGlow);
-  // Fluorescent ceiling strips flicker independently.
-  const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xd5e8d8 });
-  const tube = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.055, 0.22), fixtureMat);
-  tube.position.set(x, WALL_H - 0.12, z); scene.add(tube);
-  const ceilingLight = new THREE.PointLight(0xc8ffe0, 0.3, 7, 2);
-  ceilingLight.position.set(x, WALL_H - 0.28, z); scene.add(ceilingLight);
-  facilityFlickerLights.push({ light: ceilingLight, tube, mat: fixtureMat, base: 0.3, timer: 0.2 + Math.random() * 1.8, dark: 0 });
-
-  // Recharge packs are placed in the facility. Walk close to pick one up.
-  const pack = new THREE.Group();
-  pack.position.set(x + (ri % 2 ? 0.8 : -0.8), 0.16, z + (ri % 2 ? 0.65 : -0.65));
-  const cell = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.3, 0.16), new THREE.MeshLambertMaterial({ color: 0x264d39, emissive: 0x0c3a20, emissiveIntensity: 1.2 }));
-  pack.add(cell);
-  const band = new THREE.Mesh(new THREE.BoxGeometry(0.245, 0.055, 0.175), new THREE.MeshBasicMaterial({ color: 0x64ff9a }));
-  band.position.y = 0.02; pack.add(band);
-  const plusV = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.14, 0.018), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  const plusH = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 0.018), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  plusV.position.set(0, 0.02, -0.09); plusH.position.set(0, 0.02, -0.09); pack.add(plusV, plusH);
-  const halo = new THREE.PointLight(0x24ff7a, 0.9, 2, 2); halo.position.y = 0.28; pack.add(halo);
-  scene.add(pack); batteryPickups.push(pack);
-}
-
 // red emergency fixtures
 const fixtures = [];
 for (let z = 1; z < W; z += 2) for (let x = 1; x < W; x += 2) {
@@ -286,7 +208,7 @@ for (const [list, mat] of [[steadyList, fxSteadyMat], [flickerList, fxFlickerMat
 // pooled red lights that follow nearby fixtures
 const poolLights = [], poolTargets = [];
 for (let i = 0; i < 4; i++) {
-  const l = new THREE.PointLight(0xff1208, 0.3, 8, 2); scene.add(l); poolLights.push(l); poolTargets.push(new THREE.Vector3());
+  const l = new THREE.PointLight(0x8d0005, 7, 9, 2); scene.add(l); poolLights.push(l); poolTargets.push(new THREE.Vector3());
 }
 
 /* ================= HELPERS ================= */
@@ -338,14 +260,14 @@ function playHorrorAudio(audio, restart = false) {
   } catch (e) {}
 }
 function updateHorrorAudio() {
-  const shouldChase = started && state === 'play' && monster.alive && monster.dist < 12;
+  const shouldChase = started && state === 'play' && monster.alive && monster.dist < 18;
   if (shouldChase) {
     if (!horrorAudio.chasing) {
       horrorAudio.chasing = true;
       playHorrorAudio(horrorAudio.chase, true);
     }
     // Build tension as the monster closes in.
-    horrorAudio.chase.volume = clamp((12 - monster.dist) / 9, 0.08, 0.78);
+    horrorAudio.chase.volume = clamp((18 - monster.dist) / 14, 0.12, 1.0);
   } else {
     horrorAudio.chasing = false;
     horrorAudio.chase.pause();
@@ -457,16 +379,6 @@ const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THRE
 const radarCanvas = document.createElement('canvas'); radarCanvas.width = radarCanvas.height = 128;
 const rg = radarCanvas.getContext('2d');
 const radarTex = new THREE.CanvasTexture(radarCanvas); radarTex.colorSpace = THREE.SRGBColorSpace;
-let radarScreen = null, radarEnabled = true;
-document.getElementById('radar-view').appendChild(radarCanvas);
-function toggleRadar() {
-  radarEnabled = !radarEnabled;
-  document.getElementById('radar-view').style.display = radarEnabled ? 'block' : 'none';
-  document.getElementById('radar-caption').style.display = radarEnabled ? 'block' : 'none';
-  document.getElementById('radar-toggle').textContent = radarEnabled ? 'RADAR: ON [T]' : 'RADAR: OFF [T]';
-  if (radarScreen) radarScreen.visible = radarEnabled;
-}
-document.getElementById('radar-toggle').addEventListener('click', e => { e.stopPropagation(); toggleRadar(); });
 (function buildGun() {
   const metal = new THREE.MeshLambertMaterial({ color: 0x2c2c2f });
   const dark = new THREE.MeshLambertMaterial({ color: 0x18181a });
@@ -486,8 +398,8 @@ document.getElementById('radar-toggle').addEventListener('click', e => { e.stopP
   muzzle.position.set(0, 0.07, -0.58); gun.add(muzzle);
   flashMesh.position.set(0, 0.07, -0.6); flashMesh.visible = false; gun.add(flashMesh);
   muzzleLight.position.set(0, 0.07, -0.65); gun.add(muzzleLight);
-  radarScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.075), new THREE.MeshBasicMaterial({ map: radarTex }));
-  radarScreen.position.set(0, 0.1, 0.1); radarScreen.rotation.x = -0.8; gun.add(radarScreen);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.075, 0.075), new THREE.MeshBasicMaterial({ map: radarTex }));
+  screen.position.set(0, 0.1, 0.1); screen.rotation.x = -0.8; gun.add(screen);
 })();
 
 /* ================= FLASHLIGHT ================= */
@@ -501,10 +413,7 @@ flash.add(spot); spot.target.position.set(0, 0, -5); flash.add(spot.target);
   lens.position.z = -0.096; flash.add(lens);
 }
 let flashOn = true;
-function toggleFlash() {
-  if (!flashOn && battery <= 0) { showMsg(['BATTERY EMPTY', 'Find a glowing cell in a facility room'], 2, '#ffb35c'); return; }
-  flashOn = !flashOn; tone(A.master || A.ctx?.destination, { type: 'square', f: 1200, f2: 900, dur: 0.02, peak: 0.1 });
-}
+function toggleFlash() { flashOn = !flashOn; tone(A.master || A.ctx?.destination, { type: 'square', f: 1200, f2: 900, dur: 0.02, peak: 0.1 }); }
 
 /* ================= INPUT SOURCES / HAND TRACKING / MOUNTING ================= */
 // Each side (left/right) is a controller, a tracked hand, or missing.
@@ -542,140 +451,15 @@ for (let i = 0; i < 2; i++) {
   for (const o of [c, h]) { o.addEventListener('connected', onConn); o.addEventListener('disconnected', onDisc); }
 }
 
-// Full tracked hands: skin-toned palm + tapered finger-bone meshes replace the distracting joint dots.
-const handMat = new THREE.MeshLambertMaterial({ color: 0x8f7a70, emissive: 0x100404 });
-const nailMat = new THREE.MeshLambertMaterial({ color: 0x262020 });
-const trackedHandModels = new WeakMap();
-const HAND_FINGERS = [
-  ['thumb-metacarpal','thumb-phalanx-proximal','thumb-phalanx-distal','thumb-tip'],
-  ['index-finger-metacarpal','index-finger-phalanx-proximal','index-finger-phalanx-intermediate','index-finger-phalanx-distal','index-finger-tip'],
-  ['middle-finger-metacarpal','middle-finger-phalanx-proximal','middle-finger-phalanx-intermediate','middle-finger-phalanx-distal','middle-finger-tip'],
-  ['ring-finger-metacarpal','ring-finger-phalanx-proximal','ring-finger-phalanx-intermediate','ring-finger-phalanx-distal','ring-finger-tip'],
-  ['pinky-finger-metacarpal','pinky-finger-phalanx-proximal','pinky-finger-phalanx-intermediate','pinky-finger-phalanx-distal','pinky-finger-tip']
-];
-const handUp = new THREE.Vector3(0,1,0), boneDir = new THREE.Vector3();
-function createTrackedHandModel(h) {
-  const model = new THREE.Group(); h.add(model);
-  const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), handMat);
-  palm.scale.set(0.052, 0.022, 0.067); model.add(palm);
-  const bones = [];
-  for (const chain of HAND_FINGERS) for (let i = 0; i < chain.length - 1; i++) {
-    const radius = chain[0].startsWith('thumb') ? 0.010 : 0.0085;
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.78, radius, 1, 7), handMat);
-    mesh.frustumCulled = false; model.add(mesh); bones.push({ mesh, a: chain[i], b: chain[i+1] });
-  }
-  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.046, 0.085, 9), handMat);
-  wrist.rotation.x = Math.PI / 2; model.add(wrist);
-  return { model, palm, wrist, bones };
-}
+// pale, ghostly hands (drawn only while hand tracking is active)
+const handGeo = new THREE.SphereGeometry(1, 8, 6);
+const handMat = new THREE.MeshLambertMaterial({ color: 0xa89a90, emissive: 0x160606 });
 function decorateHand(h) {
   if (!h || !h.joints) return;
-  let model = trackedHandModels.get(h);
-  if (!model) { model = createTrackedHandModel(h); trackedHandModels.set(h, model); }
-  const J = h.joints, wrist = J['wrist'], mid = J['middle-finger-metacarpal'], index = J['index-finger-metacarpal'], pinky = J['pinky-finger-metacarpal'];
-  const ready = wrist && mid && index && pinky && wrist.visible && mid.visible && index.visible && pinky.visible;
-  model.model.visible = !!ready;
-  if (!ready) return;
-  // joints are hand-local; interpolate the broad palm from wrist to the metacarpal row.
-  model.palm.position.copy(wrist.position).lerp(mid.position, 0.58);
-  const span = index.position.distanceTo(pinky.position);
-  model.palm.scale.set(Math.max(0.04, span * 0.72), 0.024, Math.max(0.052, wrist.position.distanceTo(mid.position) * 0.72));
-  model.wrist.position.copy(wrist.position).lerp(mid.position, 0.18);
-  for (const bone of model.bones) {
-    const a = J[bone.a], b = J[bone.b];
-    bone.mesh.visible = !!(a && b && a.visible && b.visible);
-    if (!bone.mesh.visible) continue;
-    boneDir.copy(b.position).sub(a.position);
-    const len = Math.max(0.008, boneDir.length());
-    bone.mesh.position.copy(a.position).addScaledVector(b.position, 0.5);
-    bone.mesh.scale.set(1, len, 1);
-    bone.mesh.quaternion.setFromUnitVectors(handUp, boneDir.normalize());
-  }
-}
-
-// Desktop first-person forearms, palms, thumbs and fingers give the weapon a real hand silhouette.
-const desktopArms = new THREE.Group(); camera.add(desktopArms);
-const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x343638 });
-const cuffMat = new THREE.MeshLambertMaterial({ color: 0x5a2724 });
-const gloveMat = new THREE.MeshLambertMaterial({ color: 0x8a7368 });
-function addArmSegment(parent, a, b, radius, material) {
-  const dir = new THREE.Vector3().subVectors(b, a), len = dir.length();
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.83, radius, len, 9), material);
-  mesh.position.copy(a).add(b).multiplyScalar(0.5); mesh.quaternion.setFromUnitVectors(handUp, dir.normalize()); parent.add(mesh); return mesh;
-}
-function buildDesktopHand(side) {
-  const sg = side === 'left' ? -1 : 1;
-  const elbow = new THREE.Vector3(side === 'left' ? -0.48 : 0.43, -0.54, -0.04);
-  const wrist = new THREE.Vector3(side === 'left' ? -0.235 : 0.145, side === 'left' ? -0.31 : -0.205, side === 'left' ? -0.40 : -0.20);
-  addArmSegment(desktopArms, elbow, wrist, 0.072, sleeveMat);
-  addArmSegment(desktopArms, elbow.clone().lerp(wrist, 0.86), wrist, 0.074, cuffMat);
-  const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), gloveMat);
-  palm.position.copy(wrist).add(new THREE.Vector3(0, -0.005, -0.028)); palm.scale.set(0.072, 0.043, 0.082); desktopArms.add(palm);
-  // Four fingers extend forward and curl slightly, thumb crosses the palm.
-  for (let i = 0; i < 4; i++) {
-    const x = (i - 1.5) * 0.026 * sg;
-    const start = wrist.clone().add(new THREE.Vector3(x, 0.008, -0.045));
-    const end = start.clone().add(new THREE.Vector3(x * 0.18, -0.008 + Math.abs(i - 1.5) * 0.003, -0.075 + Math.abs(i - 1.5) * 0.012));
-    addArmSegment(desktopArms, start, end, 0.011, gloveMat);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.011, 7, 5), gloveMat); tip.position.copy(end); desktopArms.add(tip);
-  }
-  const thumbA = wrist.clone().add(new THREE.Vector3(-sg * 0.06, 0.002, -0.006));
-  const thumbB = wrist.clone().add(new THREE.Vector3(-sg * 0.095, 0.008, -0.052));
-  addArmSegment(desktopArms, thumbA, thumbB, 0.015, gloveMat);
-  const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.016, 8, 6), gloveMat); knuckle.position.copy(thumbB); desktopArms.add(knuckle);
-}
-buildDesktopHand('left'); buildDesktopHand('right');
-
-// VR forearms follow each live controller / tracked wrist instead of floating at fixed screen positions.
-const xrArmModels = {};
-const controllerHandModels = {};
-for (const side of ['left','right']) {
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.082, 1, 9), sleeveMat);
-  arm.visible = false; scene.add(arm);
-  const cuff = new THREE.Mesh(new THREE.SphereGeometry(0.078, 9, 7), cuffMat);
-  cuff.visible = false; scene.add(cuff);
-  xrArmModels[side] = { arm, cuff };
-}
-function makeControllerHand(ctrl, side) {
-  const group = new THREE.Group(); ctrl.add(group);
-  group.position.set(0, -0.032, 0.025);
-  const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 7), gloveMat);
-  palm.position.set(0, -0.005, -0.005); palm.scale.set(0.061, 0.032, 0.074); group.add(palm);
-  for (let i=0;i<4;i++) {
-    const x=(i-1.5)*0.027;
-    const a=new THREE.Vector3(x,-0.002,-0.038), b=new THREE.Vector3(x*0.92,-0.007,-0.12+Math.abs(i-1.5)*0.012);
-    addArmSegment(group,a,b,0.0095,gloveMat);
-    const tip=new THREE.Mesh(new THREE.SphereGeometry(0.0095,7,5),gloveMat); tip.position.copy(b); group.add(tip);
-  }
-  const ta=new THREE.Vector3(side==='left'?0.05:-0.05,0,-0.005), tb=new THREE.Vector3(side==='left'?0.09:-0.09,0.008,-0.055);
-  addArmSegment(group,ta,tb,0.013,gloveMat);
-  return group;
-}
-function updateXRArms() {
-  const xr = renderer.xr.isPresenting;
-  for (const side of ['left','right']) {
-    const s = sides[side], parts=xrArmModels[side], mode=sideMode(side);
-    let end=null;
-    if (xr && mode==='hand' && s.tracked && s.hand && s.hand.joints && s.hand.joints.wrist && s.hand.joints.wrist.visible) {
-      end=s.hand.joints.wrist.getWorldPosition(new THREE.Vector3());
-    } else if (xr && mode==='ctrl' && s.ctrl) {
-      end=s.ctrl.getWorldPosition(new THREE.Vector3());
-    }
-    const show = !!end;
-    parts.arm.visible=show; parts.cuff.visible=show;
-    if (show) {
-      const start = camera.localToWorld(new THREE.Vector3(side==='left' ? -0.25 : 0.25, -0.25, 0.08));
-      const dir = end.clone().sub(start), len=Math.max(0.05,dir.length());
-      parts.arm.position.copy(start).add(end).multiplyScalar(0.5);
-      parts.arm.scale.set(1,len,1); parts.arm.quaternion.setFromUnitVectors(handUp,dir.normalize());
-      parts.cuff.position.copy(end);
-    }
-    if (xr && mode==='ctrl' && s.ctrl) {
-      if (!controllerHandModels[side] || controllerHandModels[side].parent !== s.ctrl) {
-        controllerHandModels[side]=makeControllerHand(s.ctrl,side);
-      }
-      controllerHandModels[side].visible=true;
-    } else if (controllerHandModels[side]) controllerHandModels[side].visible=false;
+  for (const name in h.joints) {
+    const j = h.joints[name];
+    if (!j.userData.vis) { const m = new THREE.Mesh(handGeo, handMat); m.frustumCulled = false; j.add(m); j.userData.vis = m; }
+    j.userData.vis.scale.setScalar(Math.max(0.006, (j.jointRadius || 0.008) * 1.05));
   }
 }
 
@@ -690,15 +474,25 @@ function updateHolder(side) {
   const J = h.joints, W = J['wrist'], P = J['middle-finger-phalanx-proximal'], M = J['middle-finger-metacarpal'] || P,
         I = J['index-finger-metacarpal'], K = J['pinky-finger-metacarpal'];
   if (!W || !P || !I || !K || !W.visible || !P.visible || !I.visible || !K.visible) return;
-  _f.copy(P.position).sub(W.position).normalize();
-  _a.copy(I.position).sub(K.position);
+  // XR joint positions are nested under the hand object. Use world positions,
+  // then convert the resulting grip pose back into the player's rig space.
+  const wW = W.getWorldPosition(new THREE.Vector3());
+  const wP = P.getWorldPosition(new THREE.Vector3());
+  const wM = M.getWorldPosition(new THREE.Vector3());
+  const wI = I.getWorldPosition(new THREE.Vector3());
+  const wK = K.getWorldPosition(new THREE.Vector3());
+  _f.copy(wP).sub(wW).normalize();
+  _a.copy(wI).sub(wK);
   _u.copy(_a).addScaledVector(_f, -_a.dot(_f)).normalize();
   _hz.copy(_f).negate();
   _hx.crossVectors(_u, _hz).normalize();
-  _hy.crossVectors(_hz, _hx);
+  _hy.crossVectors(_hz, _hx).normalize();
   _hm.makeBasis(_hx, _hy, _hz);
-  s.holder.quaternion.setFromRotationMatrix(_hm);
-  s.holder.position.copy(W.position).multiplyScalar(0.4).addScaledVector(M.position, 0.6);
+  const worldQ = new THREE.Quaternion().setFromRotationMatrix(_hm);
+  const rigQ = rig.getWorldQuaternion(new THREE.Quaternion()).invert();
+  s.holder.quaternion.copy(rigQ.multiply(worldQ));
+  const worldGrip = wW.multiplyScalar(0.4).addScaledVector(wM, 0.6);
+  s.holder.position.copy(rig.worldToLocal(worldGrip));
   s.tracked = true;
 }
 
@@ -707,19 +501,17 @@ const hyst = (prev, d, on, off) => (prev ? d < off : d < on);
 function readGestures(side) {
   const s = sides[side], g = s.g, h = s.hand;
   g.valid = false;
-  const off = () => { g.pI = g.pM = g.pR = g.pP = g.fist = g.open = false; };
+  const off = () => { g.pI = g.pM = g.pR = g.fist = false; };
   if (sideMode(side) !== 'hand' || !h || !h.joints) { off(); return; }
   const J = h.joints, T = J['thumb-tip'], IT = J['index-finger-tip'], MT = J['middle-finger-tip'],
         RT = J['ring-finger-tip'], PT = J['pinky-finger-tip'], W = J['wrist'];
-  if (!(T && IT && MT && RT && PT && W) || !T.visible || !IT.visible || !MT.visible || !RT.visible || !PT.visible || !W.visible) { off(); g.pP = false; g.open = false; return; }
+  if (!(T && IT && MT && RT && PT && W) || !T.visible || !IT.visible || !MT.visible || !RT.visible || !PT.visible || !W.visible) { off(); return; }
   g.valid = true;
-  g.pI = hyst(g.pI, T.position.distanceTo(IT.position), 0.022, 0.034);   // index pinch: fire / flashlight
-  g.pM = hyst(g.pM, T.position.distanceTo(MT.position), 0.022, 0.034);   // middle pinch: reload / reverse walk
-  g.pR = hyst(g.pR, T.position.distanceTo(RT.position), 0.024, 0.036);   // ring pinch: snap turn
-  g.pP = hyst(!!g.pP, T.position.distanceTo(PT.position), 0.025, 0.038); // pinky pinch: radar toggle
+  g.pI = hyst(g.pI, T.position.distanceTo(IT.position), 0.022, 0.034);   // index pinch
+  g.pM = hyst(g.pM, T.position.distanceTo(MT.position), 0.022, 0.034);   // middle pinch
+  g.pR = hyst(g.pR, T.position.distanceTo(RT.position), 0.024, 0.036);   // ring pinch
   const curl = (MT.position.distanceTo(W.position) + RT.position.distanceTo(W.position) + PT.position.distanceTo(W.position)) / 3;
-  g.fist = hyst(g.fist, curl, 0.11, 0.135);                                // fist: walk forward
-  g.open = !g.fist && !g.pI && !g.pM && !g.pR && !g.pP;
+  g.fist = hyst(g.fist, curl, 0.11, 0.135);                                // fist (middle/ring/pinky curled)
   if (g.fist) s.fistT = time;
 }
 
@@ -836,53 +628,23 @@ const vignette = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), new THREE
 }));
 vignette.renderOrder = 998; vignette.frustumCulled = false; camera.add(vignette);
 
-/* ================= BLACK-SCREEN 3D JUMPSCARE ================= */
-const jumpOverlay = new THREE.Group(); jumpOverlay.visible = false; jumpOverlay.renderOrder = 1000; camera.add(jumpOverlay);
-const jumpBG = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 4.2), new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, depthWrite: false }));
-jumpBG.position.set(0, 0, -1.28); jumpBG.renderOrder = 1000; jumpOverlay.add(jumpBG);
-const jumpFace = new THREE.Group(); jumpFace.position.set(0, 0.01, -0.78); jumpFace.scale.setScalar(0.12); jumpOverlay.add(jumpFace);
-const jumpDark = new THREE.MeshBasicMaterial({ color: 0x080607, depthTest: false });
-const jumpFlesh = new THREE.MeshBasicMaterial({ color: 0x271718, depthTest: false });
-const jumpRed = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false });
-const jumpWhite = new THREE.MeshBasicMaterial({ color: 0xe4d8cf, depthTest: false });
-function jumpMesh(geo, mat, x, y, z, sx=1, sy=1, sz=1) {
-  const mesh = new THREE.Mesh(geo, mat); mesh.position.set(x,y,z); mesh.scale.set(sx,sy,sz); mesh.renderOrder = 1002; jumpFace.add(mesh); return mesh;
-}
-jumpMesh(new THREE.SphereGeometry(0.31, 12, 9), jumpFlesh, 0, 0.02, 0, 0.9, 1.16, 0.56);
-jumpMesh(new THREE.ConeGeometry(0.11, 0.34, 5), jumpDark, -0.21, 0.29, -0.02, 0.7, 1, 0.7);
-jumpMesh(new THREE.ConeGeometry(0.11, 0.34, 5), jumpDark, 0.21, 0.29, -0.02, 0.7, 1, 0.7);
-for (const side of [-1,1]) {
-  jumpMesh(new THREE.SphereGeometry(0.082, 8, 6), jumpDark, side*0.13, 0.075, 0.165, 1.15, 0.8, 0.5);
-  const eye = jumpMesh(new THREE.SphereGeometry(0.047, 8, 6), jumpRed, side*0.13, 0.075, 0.198, 1, 0.9, 0.6);
-  eye.material = jumpRed;
-}
-jumpMesh(new THREE.BoxGeometry(0.34,0.22,0.06), jumpDark, 0, -0.12, 0.18, 1, 1, 0.6);
-for (let i=0;i<7;i++) jumpMesh(new THREE.ConeGeometry(0.025,0.12,4), jumpWhite, -0.13+i*0.043, -0.095, 0.215, 1, 1, 0.6);
-for (const side of [-1,1]) {
-  const claw = jumpMesh(new THREE.ConeGeometry(0.055,0.38,5), jumpFlesh, side*0.38, -0.2, -0.02, 1,1,0.7);
-  claw.rotation.z = -side*0.9;
-}
-let jumpscareActive = false, jumpElapsed = 0, gameOverShown = false;
-function beginJumpscare() {
-  jumpscareActive = true; jumpElapsed = 0; gameOverShown = false;
-  jumpOverlay.visible = true; jumpFace.scale.setScalar(0.12); jumpFace.rotation.set(0,0,0);
-  jumpFace.position.set(0, 0.01, -0.92); msgPlane.visible = false;
-}
-function updateJumpscare(dt) {
-  if (!jumpscareActive) return;
-  jumpElapsed += dt;
-  const punch = Math.min(1, jumpElapsed / 0.36);
-  const scale = jumpElapsed < 0.36 ? 0.12 + punch * 1.72 : 1.84 + Math.sin(jumpElapsed * 23) * 0.035;
-  jumpFace.scale.setScalar(scale);
-  jumpFace.position.z = -0.92 + Math.min(0.34, jumpElapsed * 0.6);
-  jumpFace.rotation.z = (Math.random() - 0.5) * (jumpElapsed < 1.15 ? 0.11 : 0.025);
-  jumpFace.rotation.x = (Math.random() - 0.5) * 0.05;
-  jumpRed.color.setHex(Math.random() < 0.12 ? 0x5d0000 : 0xff0000);
-  if (jumpElapsed > 2.25 && !gameOverShown) {
-    jumpOverlay.visible = false; jumpscareActive = false; gameOverShown = true;
-    showMsg(['YOU DIED', 'Kills: ' + kills, 'Any trigger / pinch / Enter to restart'], Infinity);
-  }
-}
+// A camera-locked monster face makes the jumpscare visible in VR as well as desktop.
+const scareCanvas = document.createElement('canvas'); scareCanvas.width = 512; scareCanvas.height = 512;
+const sc = scareCanvas.getContext('2d');
+sc.fillStyle = '#050000'; sc.fillRect(0, 0, 512, 512);
+const haze = sc.createRadialGradient(256, 270, 20, 256, 270, 270);
+haze.addColorStop(0, '#3a0000'); haze.addColorStop(1, '#000000'); sc.fillStyle = haze; sc.fillRect(0, 0, 512, 512);
+// Gaunt, asymmetrical face, hollow eyes and an impossibly wide mouth.
+sc.fillStyle = '#b9aaa0'; sc.beginPath(); sc.moveTo(95,110); sc.quadraticCurveTo(256,15,417,110); sc.lineTo(390,345); sc.quadraticCurveTo(256,500,122,345); sc.closePath(); sc.fill();
+sc.fillStyle = '#100000'; sc.beginPath(); sc.ellipse(177,205,66,43,-0.12,0,Math.PI*2); sc.ellipse(335,198,72,46,0.15,0,Math.PI*2); sc.fill();
+sc.fillStyle = '#ff1010'; sc.shadowColor = '#ff0000'; sc.shadowBlur = 30; sc.beginPath(); sc.ellipse(180,207,17,25,0,0,Math.PI*2); sc.ellipse(333,200,19,27,0,0,Math.PI*2); sc.fill(); sc.shadowBlur = 0;
+sc.fillStyle = '#050000'; sc.beginPath(); sc.moveTo(142,292); sc.quadraticCurveTo(255,245,374,286); sc.lineTo(355,371); sc.quadraticCurveTo(254,426,158,364); sc.closePath(); sc.fill();
+sc.fillStyle = '#ded4c8'; for(let i=0;i<9;i++){ const x=160+i*24; sc.beginPath(); sc.moveTo(x,285+Math.sin(i)*5); sc.lineTo(x+13,289); sc.lineTo(x+8,322+Math.random()*8); sc.closePath(); sc.fill(); }
+for(let i=0;i<55;i++){ sc.strokeStyle='rgba(20,0,0,'+(0.15+Math.random()*0.45)+')'; sc.lineWidth=1+Math.random()*4; sc.beginPath(); const x=100+Math.random()*310; sc.moveTo(x,80+Math.random()*100); sc.lineTo(x+(Math.random()-0.5)*40,300+Math.random()*150); sc.stroke(); }
+const scareTex = new THREE.CanvasTexture(scareCanvas); scareTex.colorSpace = THREE.SRGBColorSpace;
+const scarePlane = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.15), new THREE.MeshBasicMaterial({map:scareTex, transparent:true, opacity:0, depthTest:false, depthWrite:false}));
+scarePlane.position.set(0,0,-0.72); scarePlane.renderOrder=1001; scarePlane.visible=false; camera.add(scarePlane);
+let scareT = 0;
 
 /* ================= EFFECTS POOLS ================= */
 const tracers = [], impacts = [];
@@ -908,61 +670,23 @@ function spawnImpact(p, color) {
 /* ================= MONSTER ================= */
 const monster = { group: new THREE.Group(), alive: false, hp: 100, maxHp: 100, speed: MONSTER_BASE_SPEED,
   pathT: 0, next: null, stun: 0, stepT: 0.4, roarT: 6, deadT: 0, flash: 0, dist: 99, phase: 0 };
-const mBody = new THREE.MeshLambertMaterial({ color: 0x171416, emissive: 0x100000 });
-const mSkin = new THREE.MeshLambertMaterial({ color: 0x75605e, emissive: 0x120000 });
-const mClaw = new THREE.MeshLambertMaterial({ color: 0x171113 });
-const mMouth = new THREE.MeshBasicMaterial({ color: 0x030202 });
-const mEyeMat = new THREE.MeshBasicMaterial({ color: 0xff0800 });
-let armL, armR, legL, legR, mEyes, mEyeLight, mJaw;
+const mBody = new THREE.MeshLambertMaterial({ color: 0x2b2424 });
+const mSkin = new THREE.MeshLambertMaterial({ color: 0x9a8f86 });
+const mEyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+let armL, armR, legL, legR, mEyes, mEyeLight;
 (function buildMonster() {
   const g = monster.group;
   const box = (w, h, d, mat, x, y, z, parent = g) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); parent.add(m); return m; };
-  const taper = (rTop, rBottom, h, mat, x, y, z, parent = g) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, 9), mat); m.position.set(x, y, z); parent.add(m); return m; };
-  // Leaning, ribbed torso and hunched shoulders.
-  const torso = taper(0.18, 0.34, 1.0, mBody, 0, 1.24, 0);
-  torso.rotation.x = -0.08;
-  for (let i = 0; i < 4; i++) {
-    const rib = box(0.46 - i * 0.025, 0.045, 0.33, mSkin, 0, 1.46 - i * 0.15, 0.13);
-    rib.rotation.z = (i % 2 ? -0.04 : 0.04);
-  }
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 14, 11), mSkin);
-  head.scale.set(0.83, 1.18, 1.05); head.position.set(0, 2.03, 0.06); g.add(head);
-  // Split jaw with a deep black mouth and mismatched pointed teeth.
-  const mouth = box(0.27, 0.19, 0.045, mMouth, 0, 1.91, 0.27);
-  mJaw = box(0.29, 0.075, 0.09, mSkin, 0, 1.82, 0.285); mJaw.rotation.x = -0.14;
-  for (let i = 0; i < 6; i++) {
-    const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085 + (i % 2) * 0.025, 5), new THREE.MeshBasicMaterial({ color: 0xd5c8bb }));
-    tooth.position.set(-0.115 + i * 0.046, 1.965, 0.305); tooth.rotation.x = Math.PI; g.add(tooth);
-  }
-  for (let i = 0; i < 5; i++) {
-    const fang = new THREE.Mesh(new THREE.ConeGeometry(0.021, 0.07, 5), new THREE.MeshBasicMaterial({ color: 0xcbbdb1 }));
-    fang.position.set(-0.09 + i * 0.045, 1.84, 0.33); g.add(fang);
-  }
-  mEyes = new THREE.Group(); mEyes.position.set(0, 2.08, 0.245); g.add(mEyes);
-  for (const side of [-1, 1]) {
-    const socket = new THREE.Mesh(new THREE.SphereGeometry(0.075, 9, 7), mMouth); socket.scale.set(1.15, 0.7, 0.45); socket.position.set(side * 0.083, 0, 0); mEyes.add(socket);
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 9, 7), mEyeMat); eye.position.set(side * 0.083, 0, 0.025); mEyes.add(eye);
-    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.28, 6), mClaw); horn.position.set(side * 0.16, 2.25, 0); horn.rotation.z = side * -0.34; g.add(horn);
-  }
-  mEyeLight = new THREE.PointLight(0xff0600, 5, 7, 1.8); mEyeLight.position.set(0, 2.04, 0.34); g.add(mEyeLight);
-  // Long asymmetric forearms end in hooked, three-pronged claws.
-  const limb = (w, h, x, y, z = 0) => { const p = new THREE.Group(); p.position.set(x, y, z); g.add(p); taper(w * 0.58, w, h, mBody, 0, -h / 2, 0, p); return p; };
-  armL = limb(0.14, 1.36, -0.38, 1.62, 0.04); armR = limb(0.17, 1.48, 0.38, 1.63, 0.04);
-  for (const [idx, a] of [armL, armR].entries()) {
-    for (let k = -1; k <= 1; k++) {
-      const finger = taper(0.014, 0.028, 0.28, mSkin, k * 0.045, -1.30, 0.035, a);
-      finger.rotation.z = k * 0.18;
-      const talon = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.17, 5), mClaw);
-      talon.position.set(k * 0.045, -1.49, 0.1); talon.rotation.x = -0.9; talon.rotation.z = k * 0.15; a.add(talon);
-    }
-    const elbowSpike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.21, 5), mClaw);
-    elbowSpike.position.set(idx ? 0.02 : -0.02, -0.48, -0.03); elbowSpike.rotation.z = idx ? -0.8 : 0.8; a.add(elbowSpike);
-  }
-  legL = limb(0.16, 1.04, -0.15, 0.82, 0); legR = limb(0.18, 1.08, 0.15, 0.82, 0);
-  for (const x of [-0.16, -0.05, 0.05, 0.16]) {
-    const spine = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.24, 5), mClaw);
-    spine.position.set(x, 1.48 + Math.abs(x) * 0.5, -0.25); spine.rotation.x = -0.5; g.add(spine);
-  }
+  box(0.55, 0.75, 0.3, mBody, 0, 1.3, 0);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), mSkin); head.scale.set(0.9, 1.35, 0.95); head.position.set(0, 1.95, 0.05); g.add(head);
+  mEyes = new THREE.Group(); mEyes.position.set(0, 2.0, 0.05); g.add(mEyes);
+  for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), mEyeMat); e.position.set(s * 0.075, 0, 0.17); mEyes.add(e); }
+  box(0.1, 0.16, 0.08, new THREE.MeshLambertMaterial({ color: 0x400000 }), 0, 1.8, 0.16);
+  mEyeLight = new THREE.PointLight(0xff0000, 4.5, 8, 2); mEyeLight.position.set(0, 2.0, 0.3); g.add(mEyeLight);
+  const limb = (w, h, x, y) => { const p = new THREE.Group(); p.position.set(x, y, 0); g.add(p); box(w, h, w, mBody, 0, -h / 2, 0, p); return p; };
+  armL = limb(0.1, 1.15, -0.35, 1.62); armR = limb(0.1, 1.15, 0.35, 1.62);
+  for (const a of [armL, armR]) for (let k = -1; k <= 1; k++) box(0.025, 0.22, 0.025, mSkin, k * 0.03, -1.22, 0, a);
+  legL = limb(0.14, 0.9, -0.14, 0.9); legR = limb(0.14, 0.9, 0.14, 0.9);
   g.visible = false; scene.add(g);
 })();
 const HIT_SPHERES = [[2.0, 0.27, true], [1.55, 0.36, false], [1.05, 0.38, false], [0.5, 0.34, false]];
@@ -980,14 +704,12 @@ function spawnMonster() {
   headPos(vH);
   field = bfsField(Math.floor(vH.x / TS), Math.floor(vH.z / TS));
   let max = 0; for (let i = 0; i < field.length; i++) if (field[i] > max) max = field[i];
-  // Spawn deep in the maze, well away from the player, to give them time to explore and prepare.
-  const spawnDistance = Math.max(18, max * 0.82);
-  const cands = []; for (let i = 0; i < field.length; i++) if (field[i] >= spawnDistance) cands.push(i);
+  const cands = []; for (let i = 0; i < field.length; i++) if (field[i] >= max * 0.7) cands.push(i);
   const c = cands[(Math.random() * cands.length) | 0];
   const m = monster; m.group.position.set(((c % W) + 0.5) * TS, 0, (((c / W) | 0) + 0.5) * TS);
   m.group.rotation.set(0, 0, 0); m.group.visible = true; m.alive = true;
   m.maxHp = MONSTER_HP + kills * 15; m.hp = m.maxHp;
-  m.speed = Math.min(MONSTER_MAX_SPEED, MONSTER_BASE_SPEED + kills * 0.28);
+  m.speed = Math.min(MONSTER_MAX_SPEED, MONSTER_BASE_SPEED + kills * 0.18);
   m.stun = 0; m.next = null; m.pathT = 0; m.roarT = rand(5, 9); m.flash = 0;
   mEyes.visible = true; mEyeLight.intensity = 3;
 }
@@ -1012,7 +734,7 @@ function updateMonster(dt) {
   if (m.next && m.next.x === mtx && m.next.z === mtz) m.pathT = 0;
   m.pathT -= dt;
   if (m.pathT <= 0) {
-    m.pathT = 0.12; field = bfsField(ptx, ptz);
+    m.pathT = 0.2; field = bfsField(ptx, ptz);
     let bestD = 1e9, bn = null;
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = mtx + dx, nz = mtz + dz; if (nx < 0 || nz < 0 || nx >= W || nz >= W) continue;
@@ -1025,9 +747,7 @@ function updateMonster(dt) {
   const dx = tx - pos.x, dz = tz - pos.z, d = Math.hypot(dx, dz) || 1;
   const sp = m.speed * (m.stun > 0 ? 0.35 : 1);
   pos.x += dx / d * sp * dt; pos.z += dz / d * sp * dt;
-  m.group.rotation.y = lerpAngle(m.group.rotation.y, Math.atan2(dx, dz), Math.min(1, dt * 10));
-  m.group.rotation.z = Math.sin(time * 5.2) * 0.035 + (m.dist < 4 ? Math.sin(time * 17) * 0.025 : 0);
-  if (mJaw) mJaw.rotation.x = -0.14 + Math.abs(Math.sin(time * 4.5)) * 0.22;
+  m.group.rotation.y = lerpAngle(m.group.rotation.y, Math.atan2(dx, dz), Math.min(1, dt * 8));
   m.dist = Math.hypot(vH.x - pos.x, vH.z - pos.z);
   // animation
   m.phase += sp * dt * 2.4;
@@ -1035,12 +755,12 @@ function updateMonster(dt) {
   armL.rotation.x = -0.4 - Math.sin(m.phase) * 0.35; armR.rotation.x = -0.4 + Math.sin(m.phase) * 0.35;
   m.group.position.y = Math.abs(Math.sin(m.phase)) * 0.04;
   m.flash = Math.max(0, m.flash - dt); mBody.emissive.setRGB(m.flash * 5, 0, 0); mSkin.emissive.setRGB(m.flash * 5, 0, 0);
-  mEyeLight.intensity = 4.0 + Math.sin(time * 13) * 1.4;
+  mEyeLight.intensity = 2.5 + Math.sin(time * 9) * 0.6;
   // sounds
   m.stepT -= dt * (sp / 2.2); if (m.stepT <= 0) { sfx.step(); m.stepT = 0.5; }
   m.roarT -= dt; if (m.roarT <= 0) { sfx.roar(); m.roarT = rand(7, 14); }
   // caught the player?
-  if (m.dist < 1.15 && state === 'play') killPlayer();
+  if (m.dist < 1.0 && state === 'play') killPlayer();
 }
 function setPos2() {
   if (A.mPan) {
@@ -1053,19 +773,14 @@ function setPos2() {
 
 /* ================= GAME STATE ================= */
 let started = false, state = 'menu', time = 0, ammo = AMMO_MAX, reloadT = 0, fireCD = 0, flashT = 0;
-let battery = 100, batteryMessageShown = false, prevRadarButton = false, hudT = 0;
 let heartT = 0, beat = 0, hurt = 0, clangT = rand(8, 14), radarT = 0, lightT = 0, prevRT = false, snapReady = true, prevLight = false, prevAny = false, lightGuard = 0, handHintShown = false, proxLast = 0;
 const keys = {}; let mouseDown = false;
 
 function resetGame() {
   horrorAudio.chase.pause(); horrorAudio.chase.currentTime = 0; horrorAudio.chase.volume = 0; horrorAudio.chasing = false;
   horrorAudio.jumpscare.pause(); horrorAudio.jumpscare.currentTime = 0;
+  scareT = 0; scarePlane.visible = false; scarePlane.material.opacity = 0; flashOn = true;
   kills = 0; ammo = AMMO_MAX; reloadT = 0; state = 'play'; hurt = 0;
-  battery = 100; batteryMessageShown = false; flashOn = true;
-  for (const pack of batteryPickups) pack.visible = true;
-  jumpscareActive = false; gameOverShown = false; jumpOverlay.visible = false; jumpElapsed = 0;
-  document.getElementById('game-hud').style.display = 'block';
-  if (radarScreen) radarScreen.visible = radarEnabled;
   rig.position.set(1.5 * TS, 0, 1.5 * TS); rig.rotation.y = 0;
   if (!renderer.xr.isPresenting) camera.rotation.set(0, 0, 0);
   spawnMonster();
@@ -1073,10 +788,15 @@ function resetGame() {
 }
 function killPlayer() {
   if (state !== 'play') return;
-  state = 'dead'; hurt = 1; sfx.roar();
-  beginJumpscare();
+  state = 'dead'; hurt = 1; scareT = 1.65;
+  scarePlane.visible = true; scarePlane.material.opacity = 1; scarePlane.scale.setScalar(0.18);
+  msgPlane.visible = false;
   horrorAudio.chase.pause(); horrorAudio.chase.currentTime = 0; horrorAudio.chasing = false;
   playHorrorAudio(horrorAudio.jumpscare, true);
+  haptic(1, 450, true);
+  // A harsh red flash and close-up lunge, then leave a clear restart screen.
+  spot.intensity = 0; flashOn = false;
+  showMsg(['', '', ''], 1.65);
 }
 function startReload() { if (reloadT > 0) return; reloadT = RELOAD_TIME; sfx.reload(); }
 function haptic(strength, ms, both) {
@@ -1109,7 +829,6 @@ function shoot() {
 window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'KeyF' && started && state === 'play') toggleFlash();
-  if (e.code === 'KeyT' && started) toggleRadar();
   if (e.code === 'KeyG' && started) swapGun();
   if (e.code === 'Enter' && state === 'dead') resetGame();
 });
@@ -1132,7 +851,6 @@ for (const ev of ['click', 'pointerdown', 'touchstart']) document.addEventListen
 /* ================= RADAR ================= */
 function drawRadar() {
   const cx = 64, cy = 50, R = 46, RANGE = 14;
-  if (!radarEnabled) { rg.fillStyle = '#020302'; rg.fillRect(0,0,128,128); radarTex.needsUpdate = true; return; }
   rg.fillStyle = '#030a05'; rg.fillRect(0, 0, 128, 128);
   rg.strokeStyle = '#0d4a22'; rg.lineWidth = 2;
   for (const r of [15, 30, 46]) { rg.beginPath(); rg.arc(cx, cy, r, 0, 7); rg.stroke(); }
@@ -1148,16 +866,13 @@ function drawRadar() {
       rg.beginPath(); rg.arc(cx + sx * k, cy + sy * k, 5, 0, 7); rg.fill();
     }
   }
-  rg.fillStyle = battery > 40 ? '#4f8' : battery > 15 ? '#ffb13b' : '#f44'; rg.font = 'bold 10px monospace'; rg.textAlign = 'center';
-  rg.fillText('BAT ' + Math.ceil(battery) + '%', 64, 101);
-  rg.fillStyle = '#15221a'; rg.fillRect(34, 105, 60, 4); rg.fillStyle = battery > 15 ? '#4f8' : '#f44'; rg.fillRect(34, 105, 60 * battery / 100, 4);
-  rg.fillStyle = ammo > 5 ? '#4f8' : '#f44'; rg.font = 'bold 18px monospace'; rg.fillText(reloadT > 0 ? 'RELOAD' : String(ammo).padStart(2, '0') + '/' + AMMO_MAX, 64, 124);
+  rg.fillStyle = ammo > 5 ? '#4f8' : '#f44'; rg.font = 'bold 26px monospace'; rg.textAlign = 'center';
+  rg.fillText(reloadT > 0 ? 'RELOAD' : String(ammo).padStart(2, '0') + '/' + AMMO_MAX, 64, 118);
   radarTex.needsUpdate = true;
 }
 
 /* ================= MAIN UPDATE ================= */
 const dz = v => (Math.abs(v) < 0.15 ? 0 : v);
-const handMoveDir = new THREE.Vector3(), cameraRight = new THREE.Vector3();
 function snapTurn(dir) {
   headPos(vH); const ang = -dir * Math.PI / 6;
   tmp.copy(rig.position).sub(vH); tmp.y = 0; tmp.applyAxisAngle(UP, ang);
@@ -1174,7 +889,6 @@ function movePlayer(ax, ay, dt) {
 function update(dt) {
   time += dt;
   const xr = renderer.xr.isPresenting;
-  desktopArms.visible = !xr;
   let ax = 0, ay = 0, fire = false, reloadBtn = false;
   if (xr) {
     for (const side of ['left', 'right']) {
@@ -1183,31 +897,18 @@ function update(dt) {
       readGestures(side);
     }
     const gS = gunSide, lS = lightSide(), gm = sideMode(gS), lm = sideMode(lS);
-    let radarBtn = false, radarGesture = false;
-    for (const side of ['left','right']) {
-      if (sideMode(side) === 'ctrl') radarBtn = radarBtn || btn(gpOf(side), 3);
-      if (sideMode(side) === 'hand') radarGesture = radarGesture || !!sides[side].g.pP;
-    }
-    const radarInput = radarBtn || radarGesture;
-    if (radarInput && !prevRadarButton && state === 'play') toggleRadar();
-    prevRadarButton = radarInput;
 
-    // Hand-only locomotion: fist walks forward, middle-finger pinch walks backward.
-    // Tilt the flashlight hand sideways to strafe while making a fist.
+    // locomotion: left stick, or a fist on the flashlight hand when hand tracking
     const gpL = gpOf('left');
-    if (gpL) { const a = gpL.axes; ax = dz(a.length >= 4 ? a[2] : a[0]); ay = -dz(a.length >= 4 ? a[3] : a[1]); }
-    else if (lm === 'hand' && sides[lS].tracked) {
-      const g = sides[lS].g, J = sides[lS].hand.joints;
-      if (g.fist) {
-        ay = 1;
-        // Roll/aim the fist sideways to strafe; use world-space palm direction so either hand works.
-        sides[lS].hand.getWorldQuaternion(_pq);
-        handMoveDir.set(0, 0, -1).applyQuaternion(_pq);
-        camera.getWorldQuaternion(_pq);
-        cameraRight.set(1, 0, 0).applyQuaternion(_pq);
-        ax = clamp(handMoveDir.dot(cameraRight) * 1.4, -0.75, 0.75);
-      } else if (g.pM && !g.pI) ay = -0.65;
-    }
+    if (gpL) {
+      const a = gpL.axes || [];
+      // Headsets report stick axes in different pairs. Pick the active pair so
+      // forward/back follows the headset's facing direction, not the controller aim.
+      const p0 = Math.hypot(a[0] || 0, a[1] || 0);
+      const p1 = Math.hypot(a[2] || 0, a[3] || 0);
+      const ix = (p1 > p0 + 0.05) ? 2 : 0;
+      ax = dz(a[ix] || 0); ay = -dz(a[ix + 1] || 0);
+    } else if (lm === 'hand' && sides[lS].g.fist) ay = 1;
 
     // gun hand: trigger / index pinch = fire, face buttons / middle pinch = reload
     if (gm === 'ctrl') { const gp = gpOf(gS); fire = btn(gp, 0); reloadBtn = btn(gp, 4) || btn(gp, 5) || btn(gp, 1); }
@@ -1246,16 +947,13 @@ function update(dt) {
 
     if ((sideMode('left') === 'hand' || sideMode('right') === 'hand') && !handHintShown && state === 'play') {
       handHintShown = true;
-      showMsg(['HAND TRACKING', 'Index pinch: fire / light  |  Middle pinch: reload / back up', 'Flashlight-hand fist: walk (tilt to strafe)', 'Ring pinch: turn  |  Pinky pinch: radar', 'Touch left wrist panel: swap gun hand'], 10, '#ff6040');
+      showMsg(['HAND TRACKING', 'Pinch index: fire  |  Pinch middle: reload', 'Flashlight hand: fist = walk, pinch = light', 'Ring pinch: turn  |  Wrist panel: swap gun'], 10, '#ff6040');
     }
   } else {
     ax = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0); ay = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
     fire = mouseDown; reloadBtn = !!keys.KeyR;
   }
   headFwd();
-
-  // Make the arms join up with the current hand/controller poses.
-  updateXRArms();
 
   // attach gun / flashlight / wrist button to whatever is holding them, with a fear tremble
   syncMounts();
@@ -1265,23 +963,6 @@ function update(dt) {
 
   if (started && state === 'play') {
     if (ax || ay) movePlayer(ax, ay, dt);
-    // The flashlight has a finite charge; facility cells restore it.
-    if (flashOn) {
-      battery = Math.max(0, battery - dt * 1.4);
-      if (battery <= 0) {
-        flashOn = false;
-        if (!batteryMessageShown) { showMsg(['BATTERY DEPLETED', 'Find a glowing green cell in a facility room'], 3, '#ffb15c'); batteryMessageShown = true; }
-      }
-    }
-    headPos(vH);
-    for (const pack of batteryPickups) if (pack.visible) {
-      pack.rotation.y += dt * 0.8; pack.position.y = 0.16 + Math.sin(time * 2.7 + pack.position.x) * 0.035;
-      if (battery < 100 && Math.hypot(pack.position.x - vH.x, pack.position.z - vH.z) < 0.85) {
-        pack.visible = false; const oldCharge = battery; battery = Math.min(100, battery + 55); batteryMessageShown = false;
-        showMsg(['POWER CELL ACQUIRED', 'Flashlight battery +' + Math.round(battery - oldCharge) + '%', 'Keep moving'], 2, '#65ff9b');
-        tone(A.master, { type: 'sine', f: 420, f2: 920, dur: 0.18, peak: 0.22 });
-      }
-    }
     fireCD -= dt;
     if (reloadT > 0) { reloadT -= dt; if (reloadT <= 0) ammo = AMMO_MAX; }
     else if (reloadBtn && ammo < AMMO_MAX) startReload();
@@ -1294,6 +975,21 @@ function update(dt) {
     setPos2();
   }
 
+  // Animate the monster-face lunge rather than freezing the whole game.
+  if (scareT > 0) {
+    scareT = Math.max(0, scareT - dt);
+    const elapsed = 1.65 - scareT;
+    const lunge = Math.min(1, elapsed / 0.22);
+    const size = 0.18 + lunge * 2.9;
+    scarePlane.visible = true; scarePlane.scale.setScalar(size);
+    scarePlane.material.opacity = scareT < 0.25 ? scareT / 0.25 : (Math.random() < 0.12 ? 0.35 : 1);
+    scarePlane.position.z = -0.72 + Math.sin(elapsed * 46) * 0.025;
+    if (scareT <= 0) {
+      scarePlane.visible = false; scarePlane.material.opacity = 0;
+      showMsg(['YOU DIED', 'Kills: ' + kills, 'Any trigger or pinch / Enter to restart'], Infinity);
+    }
+  }
+
   // flashes / effects
   flashT -= dt; if (flashT <= 0) { muzzleLight.intensity = 0; flashMesh.visible = false; }
   for (const t of tracers) if (t.visible) { t.userData.life -= dt; t.material.opacity = Math.max(0, t.userData.life / 0.06); if (t.userData.life <= 0) t.visible = false; }
@@ -1302,7 +998,7 @@ function update(dt) {
   // flashlight (flickers when the monster is close)
   const near = monster.alive && monster.dist < 7 && state === 'play';
   updateHorrorAudio();
-  spot.intensity = flashOn ? FLASH_INTENSITY * (near && Math.random() < 0.12 ? 0.08 : 1) : 0;
+  spot.intensity = flashOn ? FLASH_INTENSITY * (near && Math.random() < 0.22 ? 0.025 : (near ? rand(0.55, 0.9) : 1)) : 0;
 
   // pooled red lights + flicker fixtures
   lightT -= dt;
@@ -1313,18 +1009,8 @@ function update(dt) {
   }
   poolLights.forEach((l, i) => {
     l.position.lerp(poolTargets[i], Math.min(1, dt * 6));
-    l.intensity = 0.3 * (0.8 + 0.2 * Math.sin(time * (2 + i) + i)) * (near && Math.random() < 0.1 ? 0.15 : 1);
+    l.intensity = 7 * (0.55 + 0.45 * Math.sin(time * (2 + i) + i)) * (near && Math.random() < 0.2 ? 0.08 : 1);
   });
-  for (const f of facilityFlickerLights) {
-    f.timer -= dt;
-    if (f.timer <= 0) {
-      f.timer = 0.12 + Math.random() * 1.35;
-      f.dark = Math.random() < 0.38 ? (Math.random() < 0.55 ? 0.025 : 0.15) : 1;
-    }
-    const multiplier = f.dark * (near && Math.random() < 0.018 ? 0.04 : 1);
-    f.light.intensity = f.base * multiplier;
-    f.mat.color.setHex(multiplier < 0.1 ? 0x242525 : 0xd5e8d8);
-  }
   const k = Math.random() > 0.15 ? 1 : 0.12; fxFlickerMat.color.setRGB(1, 0.1, 0.04).multiplyScalar(k);
 
   // ambient random clangs
@@ -1348,18 +1034,8 @@ function update(dt) {
   beat = Math.max(0, beat - dt * 3);
   vignette.material.uniforms.uI.value = state === 'dead' ? 1 : clamp(prox * 0.7 + beat * 0.25 * prox, 0, 0.95);
 
-  updateJumpscare(dt);
-  if (msgPlane.visible && time > msgUntil && !jumpscareActive) msgPlane.visible = false;
+  if (msgPlane.visible && time > msgUntil) msgPlane.visible = false;
   radarT -= dt; if (radarT <= 0) { radarT = 0.066; drawRadar(); }
-  hudT -= dt;
-  if (hudT <= 0) {
-    hudT = 0.12;
-    const btext = document.getElementById('battery-text'), bbar = document.getElementById('battery-bar');
-    btext.textContent = Math.ceil(battery) + '%'; bbar.style.width = battery + '%';
-    bbar.style.background = battery < 20 ? '#ff3434' : battery < 45 ? '#ffb13b' : '#5dff92';
-    bbar.style.boxShadow = battery < 20 ? '0 0 8px #ff2020' : '0 0 8px #37ff8b';
-    if (radarScreen) radarScreen.visible = radarEnabled;
-  }
   updateListener();
 }
 
